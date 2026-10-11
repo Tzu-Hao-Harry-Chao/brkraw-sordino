@@ -20,8 +20,10 @@ global spoke g is spoke g mod NPro of repetition g // NPro (D-0191 2), so
 windows run across repetition boundaries. Such windows, and windows that start
 inside a method subset, are reported, not refused (D-0187).
 
-Reconstruction: a frame image is the adjoint of its spokes with the product's
-density weight |k|^2 normalised over one repetition (as ``recon_dataobj``), times
+Reconstruction: a frame image is the adjoint of its spokes with the density
+weights of one repetition (as ``recon_dataobj``: |k|^2 normalised over the
+repetition, or the ``weights`` the hook passes for golden scans, the
+``golden_weights`` choice, WI-0113 runs 5-6), times
 NPro / (spokes in the frame), so every frame has the brightness of a
 one-repetition image. The engine keeps one running sum over the stream and a
 copy of it at each frame start; a frame is the difference at its end, so every
