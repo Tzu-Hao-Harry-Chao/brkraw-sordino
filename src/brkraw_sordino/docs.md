@@ -365,19 +365,32 @@ hooks:
 ## Notes
 
 - The hook reconstructs data using an adjoint NUFFT and returns magnitude images by default.
-- Image grid (WI-0119): the image is evaluated on ParaVision's 3D grid, so the brkraw affine
-  (from `VisuCorePosition`) describes it. ParaVision puts the FOV centre (the slice-pack offset,
-  reached through the receiver frequencies `ACQ_O1_list`) at index `N/2` on read and phase and
-  `N/2 - 0.5` on the slice axis (`RECO_rotate` 0.5, 0.5, 0.5 - 0.5/N, also in Bruker's 3D
-  Cartesian methods); the adjoint NUFFT puts it at `N // 2`, so the reconstruction applies a
-  half-voxel phase on the slice axis (even sizes; odd sizes get it on read and phase). Before
-  this change every image sat half a voxel too high on the slice axis (0.1 mm at 0.2 mm voxels,
-  0.2 mm at 0.4 mm); recon caches written before it are not read. ParaVision's own reconstruction
-  of the same scans (pdata/1) sits about half a voxel too low on that axis (phantom, Default
-  trajectory, 120^3 and 60^3: sordino minus ParaVision 0.94 and 1.02 voxels before this change,
-  0.48 and 0.45 after); its geometry parameters do not explain it, so it is presumably in
-  ParaVision's regridding (inference, not tested), and it is not corrected here. Checked on axial
-  scans only.
+- Image grid (WI-0119): the image is placed where the brkraw affine says. The k-space phase
+  origin is the FOV centre `c` (the sequence moves it to the slice-pack position with the
+  receiver frequencies `ACQ_O1_list`); the adjoint NUFFT puts it at index `N // 2`, the affine
+  `A` at `A^-1 c`. The reconstruction moves its grid by `A^-1 c - N // 2` on each axis (a
+  linear phase on the samples; the affine is unchanged). `A` is the affine brkraw resolves for
+  the reco, its voxel-axis flips included (`ACQ_scaling_phase < 0`, coronal); `c` is the FOV
+  centre ParaVision records (`RECO_rotate * N` placed by `VisuCorePosition` and
+  `VisuCoreOrientation`), which on the phantom equals the slice-pack position (`PVM_SliceGeo`)
+  to 1e-6 mm. Without reco parameters (no affine) the grid stays at `N // 2`. For the phantom
+  scans (axial, 120^3 and 60^3) the shift is (0, 0, -0.5) voxel: before this change every image
+  sat half a voxel too high on the slice axis (0.1 mm at 0.2 mm voxels, 0.2 mm at 0.4 mm);
+  recon caches written before it are not read. Odd sizes, other planes and flipped axes follow
+  from the affine and are tested on synthetic affines only.
+- Why the slice axis differs (inference): ParaVision writes `RECO_rotate` 0.5, 0.5,
+  `0.5 - 0.5/N` = `(N - 1) / (2N)` for this method and for Bruker's own 3D methods seen
+  (FieldMap 64^3 sagittal, UTE3D 128^3 radial in the PV 360.3.5 and 3.6 example protocols), with
+  every offset and plane seen (axial, sagittal): the FOV centre sits at the FFT centre `N/2` on read and phase but at the
+  geometric centre `(N - 1)/2` of the partitions on the third axis, as slices of a slice pack
+  sit symmetrically about its position. The Bruker manuals and method sources available do not
+  give the formula (`ATB_SetRecoRotate` is in a closed library), so this reading is not
+  confirmed.
+- ParaVision's own reconstruction of the same scans (pdata/1) sits about half a voxel too low on
+  the slice axis (phantom, Default trajectory, 120^3 and 60^3: sordino minus ParaVision 0.94 and
+  1.02 voxels before this change, 0.48 and 0.45 after); its geometry parameters do not explain
+  it, so it is presumably in ParaVision's regridding (inference, not tested), and it is not
+  corrected here.
 - The k-space centre inside the dead time is not sampled and, unless `estimate_k0` is on, not filled. Its radius
   (k-grid units, first acquired and first kept sample) is logged (info for a general
   ZTE gap over one unit, debug otherwise) and kept as `scan._sordino_recon_meta["kspace_gap"]`
@@ -393,7 +406,7 @@ hooks:
 - `ext_factors` keeps every object where it was: the affine keeps the voxel size and
   direction and moves the origin by `-(N // 2 - N0 // 2)` voxels on each output axis
   (`N` the extended size, `N0` the size at 1.0; the adjoint NUFFT puts the grid centre at
-  index `N // 2` for odd and even sizes, and the ParaVision grid shift of `N0` above is applied
+  index `N // 2` for odd and even sizes, and the grid shift derived for `N0` above is applied
   on the extended grid as well). When `N` and `N0` differ in parity the extra voxel
   sits on one side, so the FOV centre moves by half a voxel while the objects do not.
   Before this fix, a factor other than 1 on index 0 or 1 moved the image when the output

@@ -2,11 +2,12 @@
 
 Behaviour changes for every scan:
 
-- Image grid (WI-0119): images are now on ParaVision's 3D grid, which the
-  affine describes. Earlier images sat half a voxel too high on the slice axis
-  (0.1 mm at 0.2 mm voxels). Default and golden trajectories, frames and
-  `estimate_k0` all change by that half voxel; the affine does not change.
-  Recon caches written before this change are not read (reconstructed once).
+- Image grid (WI-0119): images are now placed where the scan's affine says
+  (grid shift = affine index of the FOV centre minus the NUFFT centre `N // 2`).
+  For the axial phantom scans this moves them half a voxel down the slice axis
+  (they sat 0.1 mm too high at 0.2 mm voxels). Default and golden trajectories,
+  frames and `estimate_k0` all follow; the affine does not change. Recon caches
+  written before this change are not read (reconstructed once).
 
 - `estimate_k0` is now on by default. The dead-time centre of k-space is
   estimated and filled for SORDINO v1-v3 data; general ZTE data and scans
