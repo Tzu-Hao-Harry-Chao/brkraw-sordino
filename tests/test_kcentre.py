@@ -88,9 +88,7 @@ def test_recon_loop_with_virtual_samples_matches_fill_centre(tmp_path):
     dtype = recon_dataobj(io.BytesIO(raw), traj, info, out, options, virtual_traj=vt, k0_out=k0s)
     assert np.issubdtype(dtype, np.complexfloating) and len(k0s) == 2 and all(len(f) == 1 for f in k0s)
     vol = np.frombuffer(out.getvalue(), dtype=dtype).reshape(2, -1)
-    from test_grid_centre import pv_grid              # ParaVision's grid (WI-0119)
-    y1 = pv_grid(y[:, 1:], traj[:, 1:], SHAPE)
-    ref0, i0 = kcentre.fill_centre(y1.astype(np.complex64), traj[:, 1:], vt, SHAPE)
+    ref0, i0 = kcentre.fill_centre(y[:, 1:].astype(np.complex64), traj[:, 1:], vt, SHAPE)
     got0 = vol[0].reshape(SHAPE[::-1]).T
     assert np.linalg.norm(got0 - ref0) / np.linalg.norm(ref0) < 1e-4
     assert abs(k0s[0][0] - i0["k0"]) < 1e-4 * abs(i0["k0"])
@@ -99,7 +97,7 @@ def test_recon_loop_with_virtual_samples_matches_fill_centre(tmp_path):
     out2, k0_plain = io.BytesIO(), []
     recon_dataobj(io.BytesIO(raw), traj, info, out2, options, k0_out=k0_plain)
     plain = np.frombuffer(out2.getvalue(), dtype=dtype).reshape(2, -1)[0].reshape(SHAPE[::-1]).T
-    ref_plain = nufft_adjoint(y1.astype(np.complex64), traj[:, 1:], SHAPE, 1)
+    ref_plain = nufft_adjoint(y[:, 1:].astype(np.complex64), traj[:, 1:], SHAPE, 1)
     assert np.linalg.norm(plain - ref_plain) / np.linalg.norm(ref_plain) < 1e-5
     assert k0_plain == []
     assert np.linalg.norm(plain - got0) > 1e-3 * np.linalg.norm(plain)   # the fill changes the image
@@ -132,9 +130,7 @@ def test_recon_loop_estimates_every_channel(tmp_path):
     assert abs(k0s[0][1] - 0.5 * k0s[0][0]) < 1e-3 * abs(k0s[0][0])
     n_vox = int(np.prod(SHAPE))
     assert len(out.getvalue()) == 2 * n_vox * np.dtype(np.complex128).itemsize
-    from test_grid_centre import pv_grid              # ParaVision's grid (WI-0119)
-    single, _ = kcentre.fill_centre(pv_grid(y[:, 1:], traj[:, 1:], SHAPE).astype(np.complex64), traj[:, 1:],
-                                    vt, SHAPE)
+    single, _ = kcentre.fill_centre(y[:, 1:].astype(np.complex64), traj[:, 1:], vt, SHAPE)
     # written as recon_vol.T in C order: (z, y, x, channel)
     first = np.frombuffer(out.getvalue(), dtype=np.complex128).reshape(SHAPE[::-1] + [2])[..., 0].T
     assert np.linalg.norm(first - single) / np.linalg.norm(single) < 1e-4

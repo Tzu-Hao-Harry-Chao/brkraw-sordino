@@ -119,8 +119,6 @@ def test_each_choice_reaches_the_image(tmp_path, monkeypatch, mode):
     from brkraw_sordino.orientation import correct as correct_orientation
 
     info, traj, fid, k = _case(tmp_path, mode)
-    from test_grid_centre import pv_grid
-    k = pv_grid(k, traj, SHAPE)                       # ParaVision's grid (WI-0119)
     tr = traj[:, 1:, :]
     refs = {
         "capped": correct_orientation(_weighted_adjoint(k[:, 1:], tr, SHAPE, _pipe_reference(tr, SHAPE)[0]), info),
