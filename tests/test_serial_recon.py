@@ -406,7 +406,8 @@ def test_hook_plans_the_chunks_from_the_limit_and_the_result_does_not_change(tmp
     monkeypatch.setattr(hook, "recon_dataobj", spy)
     results, infos = [], []
     for name, gb in (("big", None), ("small", None)):
-        kw = {"cache_dir": str(tmp_path / name), "as_complex": True, "split_ch": True}
+        # the limit below is computed without the K0 estimate (on by default since D-0200 2)
+        kw = {"cache_dir": str(tmp_path / name), "as_complex": True, "split_ch": True, "estimate_k0": False}
         if name == "small":
             first = hook.get_dataobj_info(_Scan(), None, **kw)
             read_part = first["peak_nbytes"] - first["recon_nbytes"]

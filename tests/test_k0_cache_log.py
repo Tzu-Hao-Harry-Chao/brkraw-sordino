@@ -38,7 +38,7 @@ def test_cache_hit_logs_one_info_line_when_estimate_k0_is_on(make, caplog):
 
 
 def test_cache_hit_logs_nothing_when_estimate_k0_is_off(make, caplog):
-    state = make()
+    state = make(estimate_k0=False)           # the default is on since D-0200 2
     with caplog.at_level(logging.INFO, logger="brkraw_sordino.hook"):
         _get(state)
     assert not _k0_lines(caplog)

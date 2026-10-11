@@ -107,7 +107,7 @@ def test_k0_metadata_flags(tmp_path):
     from brkraw_sordino.hook import _recon_metadata
 
     info = _info()
-    plain = _recon_metadata(info, _build_options({"cache_dir": str(tmp_path)}))
+    plain = _recon_metadata(info, _build_options({"cache_dir": str(tmp_path), "estimate_k0": False}))
     est = _recon_metadata(info, _build_options({"cache_dir": str(tmp_path), "estimate_k0": "true"}))
     assert plain["kspace_gap"]["centre_filled"] is False and plain["k0"] is None
     assert est["kspace_gap"]["centre_filled"] is True

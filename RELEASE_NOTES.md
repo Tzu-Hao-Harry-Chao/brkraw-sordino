@@ -1,3 +1,31 @@
+# Unreleased (branch golden-weights-k0, on brkraw-060)
+
+Behaviour changes for every scan:
+
+- `estimate_k0` is now on by default. The dead-time centre of k-space is
+  estimated and filled for SORDINO v1-v3 data; general ZTE data and scans
+  without the sequence timing values are reconstructed without it (info line).
+  With `correct_ramptime: false` and no explicit `estimate_k0` it is off (info
+  line); `estimate_k0: true` with `correct_ramptime: false` is still an error.
+  Images differ from earlier versions, reconstruction takes longer and needs
+  more memory (on small computers the memory check may now stop and offer a
+  higher limit). Set `estimate_k0: false` for the previous result. Recon caches
+  made with the old default are not reused under the new default (they are
+  found again with `estimate_k0: false`).
+
+Golden trajectories (`TrajectoryMode` GoldenSampling / GoldenGridSampling of
+`sordino_260801`; merged into brkraw-060 at da72d83):
+
+- New option `golden_weights`: `capped` (default; Pipe-Menon weights capped at
+  the |k|^2 weight, then one common factor), `pipe` (uncapped Pipe-Menon) or
+  `k2` (|k|^2). Default scans are unchanged. The default keeps the recon caches
+  made at da72d83.
+- Already on brkraw-060 (da72d83): golden trajectory lists, frames (subset,
+  sliding window, accumulation; `frame_spokes`, `frame_step`,
+  `frame_accumulate`), the Golden Grid head rule for `sordino_260801`, and the
+  capped sample-based density weights. See "Golden trajectories and frames" in
+  the README.
+
 # Release v0.2.4
 
 Date: 2026-01-31

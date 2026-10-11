@@ -145,7 +145,7 @@ def test_default_scan_ignores_the_choice_with_a_warning(tmp_path, monkeypatch, c
     with caplog.at_level(logging.WARNING, logger="brkraw_sordino.hook"):
         other = _hook_image(tmp_path / "b", monkeypatch, info, fid, estimate_k0=False, frame_spokes=None,
                             golden_weights="pipe")
-    assert np.array_equal(plain, other)
+    assert _rel(other, plain) < 1e-12          # two finufft runs differ by ~1e-16 (threads)
     assert [r for r in caplog.records if "golden_weights" in r.getMessage()
             and "golden" in r.getMessage().lower()]
 

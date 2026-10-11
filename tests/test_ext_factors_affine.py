@@ -188,7 +188,8 @@ PINNED = {
     (1.1, "1.1"),
 ], ids=str)
 def test_recon_cache_key_and_shape_are_unchanged(tmp_path, ext, pin):
-    kw = {"cache_dir": str(tmp_path)}
+    # pinned with estimate_k0 off, the default when the names were measured (on since D-0200 2)
+    kw = {"cache_dir": str(tmp_path), "estimate_k0": False}
     if ext is not None:
         kw["ext_factors"] = ext
     options = hook._build_options(kw)

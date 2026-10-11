@@ -249,7 +249,9 @@ def test_memory_estimate_counts_the_weights(tmp_path, monkeypatch):
     info = _golden_info(1, "GoldenGridSampling")
     monkeypatch.setattr(hook, "_parse_recon_info", lambda scan: dict(info))
     monkeypatch.setattr(hook, "_get_fid_entry", lambda scan: _Entry(b"\0" * (8 * N_POINTS * info["NPro"])))
-    gi = hook.get_dataobj_info(_Scan(), None, cache_dir=str(tmp_path), frame_spokes="repetition")
+    # without the K0 estimate (on by default since D-0200 2; with it the virtual samples count too)
+    gi = hook.get_dataobj_info(_Scan(), None, cache_dir=str(tmp_path), frame_spokes="repetition",
+                               estimate_k0=False)
     expected = memguard.dcf_nbytes(info["NPro"], N_POINTS - 1, SHAPE)
     assert expected == 8 * info["NPro"] * (N_POINTS - 1) + 16 * int(np.prod(SHAPE))
     assert gi["recon_dcf_nbytes"] == expected and gi["recon_nbytes"] >= expected

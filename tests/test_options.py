@@ -97,7 +97,8 @@ def test_estimate_k0_changes_the_recon_cache_key(tmp_path):
     from dataclasses import asdict
     from brkraw_sordino.recon import build_recon_cache_path
 
-    a, b = _opts(tmp_path), _opts(tmp_path, estimate_k0=True)
+    # explicit off against on (the default is on since D-0200 2)
+    a, b = _opts(tmp_path, estimate_k0=False), _opts(tmp_path, estimate_k0=True)
     pa = build_recon_cache_path(tmp_path, {"options": asdict(a)})
     pb = build_recon_cache_path(tmp_path, {"options": asdict(b)})
     assert pa != pb

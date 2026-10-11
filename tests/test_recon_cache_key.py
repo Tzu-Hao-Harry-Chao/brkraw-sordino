@@ -40,9 +40,10 @@ def test_every_other_option_is_in_the_key(tmp_path):
     # plan ("frames" entry, tests/test_golden_frames.py), so keys without frames are unchanged
     from brkraw_sordino.frames import FRAME_KEYS
 
+    # golden_weights (WI-0113 run 6) is keyed through the weight rule of golden scans ("density")
     keyed = set(_params(tmp_path)["options"])
     names = {f.name for f in fields(Options)}
-    assert keyed == names - set(hook.RECON_KEY_EXCLUDED) - set(FRAME_KEYS)
+    assert keyed == names - set(hook.RECON_KEY_EXCLUDED) - set(FRAME_KEYS) - {"golden_weights"}
 
 
 @pytest.mark.parametrize("kw", [
@@ -66,7 +67,7 @@ def test_cache_dir_is_not_in_the_key(tmp_path):
 @pytest.mark.parametrize("kw", [
     {"ext_factors": 2}, {"ignore_samples": 2}, {"offset": 1}, {"num_frames": 2},
     {"correct_spoketiming": True}, {"correct_ramptime": False}, {"offreso_freqs": 120.0},
-    {"mem_limit": 1.0}, {"estimate_k0": True},
+    {"mem_limit": 1.0}, {"estimate_k0": False},          # the default is on since D-0200 2
 ])
 def test_content_options_change_the_key(tmp_path, kw):
     assert _paths(tmp_path, **kw)[0] != _paths(tmp_path)[0]

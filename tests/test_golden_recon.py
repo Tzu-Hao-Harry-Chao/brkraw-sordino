@@ -60,6 +60,8 @@ def _hook_image(tmp_path, monkeypatch, info, fid, **kw):
     monkeypatch.setattr(hook, "_parse_recon_info", lambda scan: dict(info))
     monkeypatch.setattr(hook, "_get_fid_entry", lambda scan: _Entry(fid))
     kw.setdefault("frame_spokes", "repetition")
+    # references here are without the K0 estimate (on by default since D-0200 2)
+    kw.setdefault("estimate_k0", False)
     real, imag = hook.get_dataobj(_Scan(), None, cache_dir=str(tmp_path), as_complex=True, **kw)
     return real + 1j * imag
 

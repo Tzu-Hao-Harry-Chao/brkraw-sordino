@@ -136,6 +136,7 @@ def _build_options(kwargs: Dict[str, Any]) -> Options:
         "split_ch",
         "as_complex",
         "estimate_k0",
+        "golden_weights",
     } | set(READ_KEYS) | set(frames_mod.FRAME_KEYS)
     unknown_keys = sorted(set(kwargs.keys()) - known_keys)
     if unknown_keys:
@@ -148,11 +149,20 @@ def _build_options(kwargs: Dict[str, Any]) -> Options:
     offreso_freqs = _normalize_offreso_freqs(kwargs.get("offreso_freqs"))
 
     correct_ramptime = parse_bool("correct_ramptime", kwargs.get("correct_ramptime", True))
-    estimate_k0 = parse_bool("estimate_k0", kwargs.get("estimate_k0", False))
-    if estimate_k0 and not correct_ramptime:
-        raise ValueError(
-            "estimate_k0=true needs correct_ramptime=true: the estimated centre samples "
-            "lie on the ramp-corrected trajectory")
+    # estimate_k0 is on by default (WI-0113 run 6, D-0200 2). Asked for explicitly it needs
+    # the ramp correction (error); by default it follows the ramp correction (info line).
+    if "estimate_k0" in kwargs:
+        estimate_k0 = parse_bool("estimate_k0", kwargs["estimate_k0"])
+        if estimate_k0 and not correct_ramptime:
+            raise ValueError(
+                "estimate_k0=true needs correct_ramptime=true: the estimated centre samples "
+                "lie on the ramp-corrected trajectory")
+    else:
+        estimate_k0 = correct_ramptime
+        if not correct_ramptime:
+            logger.info("estimate_k0 (on by default) is off because correct_ramptime is false: the "
+                        "estimated centre samples lie on the ramp-corrected trajectory.")
+    golden_weights = dcf.parse_choice(kwargs.get("golden_weights", dcf.DEFAULT))
 
     return Options(
         ext_factors=_normalize_ext_factors(kwargs.get("ext_factors")),
@@ -171,7 +181,12 @@ def _build_options(kwargs: Dict[str, Any]) -> Options:
         frame_spokes=frames_mod.parse_frame_spokes(kwargs.get("frame_spokes")),
         frame_step=frames_mod.parse_frame_step(kwargs.get("frame_step")),
         frame_accumulate=parse_bool("frame_accumulate", kwargs.get("frame_accumulate", False)),
+        golden_weights=golden_weights,
     )
+
+
+class K0TimingError(ValueError):
+    """``estimate_k0`` cannot run: the scan lacks the sequence timing parameters."""
 
 
 def _resolve_k0(options: Options, recon_info: Dict[str, Any]) -> Options:
@@ -187,7 +202,7 @@ def _resolve_k0(options: Options, recon_info: Dict[str, Any]) -> Options:
     try:
         version = timing_mod.read_timing(recon_info).version
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"estimate_k0 needs the sequence timing parameters: {exc}") from exc
+        raise K0TimingError(f"estimate_k0 needs the sequence timing parameters: {exc}") from exc
     if version == "zte":
         logger.info("estimate_k0 applies to SORDINO v1-v3 only; general ZTE data are reconstructed "
                     "without it.")
@@ -303,7 +318,7 @@ def _build_cache_params(
     # the frame options enter through the resolved frame plan (WI-0113 CP3), so a key
     # without frames (one repetition per frame) is the key from before CP3
     keyed = {k: v for k, v in asdict(options).items()
-             if k not in RECON_KEY_EXCLUDED and k not in frames_mod.FRAME_KEYS}
+             if k not in RECON_KEY_EXCLUDED and k not in frames_mod.FRAME_KEYS and k != "golden_weights"}
     params = {
         "scan_id": getattr(scan, "scan_id", None),
         "reco_id": reco_id,
@@ -314,9 +329,10 @@ def _build_cache_params(
     }
     if frame_plan is not None:
         params["frames"] = frame_plan.key()
-    if dcf.uses_sample_weights(recon_info):
-        # golden trajectories: sample-based density weights (WI-0113 run 5); Default keys unchanged
-        params["density"] = dict(dcf.RULE)
+    if dcf.is_golden(recon_info):
+        # golden trajectories: the density-weight rule of the golden_weights choice (WI-0113 runs 5
+        # and 6; the default "capped" is the run-5 key); Default keys unchanged
+        params["density"] = dcf.rule(getattr(options, "golden_weights", dcf.DEFAULT))
     return params
 
 
@@ -589,7 +605,7 @@ def _output_info(recon_info: Dict[str, Any], options: Options, cached_shape, cac
     n_chunks = None
     k0_solve = k0_reason = None
     dcf_share = 0
-    if not cached and dcf.uses_sample_weights(recon_info):
+    if not cached and dcf.uses_sample_weights(recon_info, options.golden_weights):
         # golden trajectories (WI-0113 run 5): the weights of one repetition are held throughout
         n_kept = int(recon_info["NPoints"]) - int(options.ignore_samples or 1)
         if options.estimate_k0:
@@ -653,7 +669,17 @@ def _plan(scan: Any, reco_id: Optional[int], kwargs: Dict[str, Any]) -> Dict[str
     """Options, cache paths, cache state, frame selection and the size estimate."""
     options = _build_options(kwargs)
     recon_info = _parse_recon_info(scan)
-    options = _resolve_k0(options, recon_info)
+    try:
+        options = _resolve_k0(options, recon_info)
+    except K0TimingError as exc:
+        if "estimate_k0" in kwargs:
+            raise
+        # on by default (D-0200 2): a scan without the timing values is reconstructed without it
+        logger.info("estimate_k0 (on by default) is off for this scan: %s", exc)
+        options.estimate_k0 = False
+    if "golden_weights" in kwargs and options.golden_weights != dcf.DEFAULT and not dcf.is_golden(recon_info):
+        logger.warning("golden_weights=%s applies to golden trajectories only; this Default scan keeps "
+                       "the |k|^2 weights.", options.golden_weights)
     fid_entry = _get_fid_entry(scan)
     frames_planned = recon_info.get("NRepetitions")
     # a short FID (WI-0109): NRepetitions becomes the complete frames, before the cache key
@@ -749,6 +775,8 @@ def get_dataobj(
     except Exception:
         setattr(scan, "_sordino_spatial_shape", None)
     recon_meta = _recon_metadata(recon_info, options)
+    # density weights used (WI-0113 run 6): the golden_weights choice for golden scans, k2 otherwise
+    recon_meta["density_weights"] = options.golden_weights if dcf.is_golden(recon_info) else "k2"
     # a short FID (WI-0109): the planned and complete frames, with the result
     recon_meta["short_fid"] = plan["short_fid"]
     frame_plan = plan["frame_plan"]
@@ -785,15 +813,16 @@ def get_dataobj(
                     logger.info("estimate_k0: the Toeplitz solve does not fit the memory limit; "
                                 "using the sample-based solve, which fits (slower).")
             weights = None
-            if dcf.uses_sample_weights(recon_info):
-                # golden trajectories: Pipe-Menon weights of the actual samples (WI-0113 run 5, D-0197 2)
+            if dcf.uses_sample_weights(recon_info, options.golden_weights):
+                # golden trajectories: Pipe-Menon weights of the actual samples (WI-0113 run 5, D-0197 2),
+                # capped unless golden_weights is "pipe" (run 6, D-0199 1); "k2" keeps |k|^2
                 from .memguard import recon_plan
                 fid_shape0 = parse_fid_info(recon_info)[0]
                 vol0 = parse_volume_shape(recon_info, options)
                 cs = chunk_spokes or recon_plan(int(recon_info["NPro"]), int(fid_shape0[1]), int(fid_shape0[2]),
                                                 vol0, estimate_k0=virtual_traj is not None)["chunk_spokes"]
                 weights = dcf.pipe_weights(traj, int(recon_info["NPro"]), options.ignore_samples or 1, vol0, cs,
-                                           virtual_traj=virtual_traj)
+                                           virtual_traj=virtual_traj, cap=options.golden_weights == "capped")
             img_temp_path = img_cache_path.with_suffix(img_cache_path.suffix + ".partial")
             if img_temp_path.exists():
                 try:

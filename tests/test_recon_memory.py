@@ -230,7 +230,7 @@ def test_estimate_k0_option_reaches_the_estimate(setup, monkeypatch):
     assert info["recon_nbytes"] == memguard.recon_nbytes(ri["NPro"], ri["NPoints"], 1, list(VOL),
                                                          estimate_k0=True)
     assert info["recon_k0_method"] == memguard.k0_method(ri["NPro"], ri["NPoints"], 1, list(VOL))["method"]
-    plain = hook.get_dataobj_info(_Scan(), None, **setup(1, write=False)["kwargs"])
+    plain = hook.get_dataobj_info(_Scan(), None, **setup(1, write=False, estimate_k0=False)["kwargs"])
     assert plain["recon_k0_method"] is None
 
 

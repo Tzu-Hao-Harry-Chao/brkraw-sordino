@@ -58,9 +58,39 @@ RULE: Dict[str, Any] = {"method": "pipe-menon", "iterations": PIPE_ITER, "upsamp
                         "scale": "sum of |k|^2/max", "virtual_samples": "included with estimate_k0",
                         "cap": "min(Pipe, |k|^2/max), then the same sum"}
 
+#: Hook option ``golden_weights`` (WI-0113 run 6, D-0199 1): the density weights of golden scans.
+#: ``capped`` (default) is ``RULE``; ``pipe`` the same estimate without the cap; ``k2`` the |k|^2 / max
+#: weights that Default scans use. Default scans keep |k|^2 whatever the option says.
+CHOICES = ("capped", "pipe", "k2")
+DEFAULT = "capped"
+_RULES: Dict[str, Dict[str, Any]] = {
+    "capped": RULE,
+    "pipe": {**RULE, "cap": "none"},
+    "k2": {"method": "|k|^2/max"},
+}
 
-def uses_sample_weights(recon_info: Dict[str, Any]) -> bool:
-    """True for golden trajectories (Default keeps |k|^2 / max)."""
+
+def parse_choice(value: Any) -> str:
+    """The ``golden_weights`` option as one of ``CHOICES`` (case and surrounding spaces ignored)."""
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in CHOICES:
+            return text
+    raise ValueError(f"golden_weights must be one of {', '.join(CHOICES)} (case-insensitive), got {value!r}")
+
+
+def rule(choice: str = DEFAULT) -> Dict[str, Any]:
+    """The weight rule of ``choice`` as it enters the recon cache key of golden scans."""
+    return dict(_RULES[choice])
+
+
+def uses_sample_weights(recon_info: Dict[str, Any], choice: str = DEFAULT) -> bool:
+    """True for golden trajectories with a sample-based choice (Default keeps |k|^2 / max)."""
+    return golden.trajectory_mode(recon_info) != "Default" and choice != "k2"
+
+
+def is_golden(recon_info: Dict[str, Any]) -> bool:
+    """True for golden trajectories (the ones the ``golden_weights`` option applies to)."""
     return golden.trajectory_mode(recon_info) != "Default"
 
 
@@ -96,7 +126,8 @@ def pipe_weights(rows: Any, n_pro: int, ignore_samples: int, shape: Sequence[int
                  cap: bool = True) -> SampleWeights:
     """Pipe-Menon weights of one repetition's samples, chunk by chunk (see the module text).
 
-    ``cap=False`` returns the uncapped estimate (diagnostics and figures; the hook always caps).
+    ``cap=False`` returns the uncapped estimate (hook option ``golden_weights: pipe``; the default
+    ``capped`` caps).
 
     ``rows(lo, hi)`` (``traj.TrajectoryRows.rows`` or an array's slice) gives the untrimmed
     rows; the first ``ignore_samples`` samples of each spoke are left out, as in the
@@ -155,4 +186,5 @@ def pipe_weights(rows: Any, n_pro: int, ignore_samples: int, shape: Sequence[int
     return SampleWeights(w[:, n_v:], w[:, :n_v] if n_v else None)
 
 
-__all__ = ["PIPE_ITER", "PIPE_UPSAMPFAC", "RULE", "uses_sample_weights", "SampleWeights", "pipe_weights"]
+__all__ = ["PIPE_ITER", "PIPE_UPSAMPFAC", "RULE", "CHOICES", "DEFAULT", "parse_choice", "rule",
+           "uses_sample_weights", "is_golden", "SampleWeights", "pipe_weights"]

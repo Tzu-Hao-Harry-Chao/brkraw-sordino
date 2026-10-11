@@ -108,13 +108,20 @@ Supported keys:
   frequency (`ACQ_O1_list`) leaves while the gradient ramps is removed. Off:
   every spoke keeps one fixed gradient vector and no phase correction.
   Timing values and adjustments are declared in `timing.py`.
-- `estimate_k0`: bool (default: false). Estimates the k-space centre samples
-  that the dead time leaves unmeasured, by a least-squares image (one channel
-  at a time, 10 conjugate-gradient iterations), and adds them to the adjoint
-  reconstruction. SORDINO v1-v3 only; on a general ZTE it is ignored with an
-  info message. It stops with an error when `correct_ramptime` is false. It
-  changes the image noticeably, no ground truth exists yet, and it makes the
-  reconstruction slower, so it is off by default. The least-squares solve has
+- `estimate_k0`: bool (default: true since WI-0113 run 6). Estimates the
+  k-space centre samples that the dead time leaves unmeasured, by a
+  least-squares image (one channel at a time, 10 conjugate-gradient
+  iterations), and adds them to the adjoint reconstruction. SORDINO v1-v3
+  only; on a general ZTE, or on a scan without the sequence timing values, it
+  is switched off with an info message. Set to true explicitly, it stops with
+  an error when `correct_ramptime` is false or the timing values are missing;
+  left at the default, it follows `correct_ramptime` (off with an info line
+  when that is false). It changes the image (the dark centre of the adjoint
+  image is filled; phantom scan 13: the K0 value 4.36e8 raw units, the same
+  within 1 % in scans 11 and 18) and makes the reconstruction slower and larger
+  (scan 13 1.4 s, golden scans 6.6 s more; the memory below). Set
+  `estimate_k0: false` for the plain adjoint (the result before this release;
+  recon caches made with the old default are found again only with it). The least-squares solve has
   two forms that give the same image and K0 within the NUFFT tolerance. The
   Toeplitz solve works on grids only (memory about 1 KiB per output voxel plus
   64 MiB, whatever the sample count) and is the faster one. The sample solve
@@ -180,7 +187,8 @@ cache and are not part of the cache key):
   4.1 GiB; 18.9 GiB before the chunked reconstruction), and 4.9 GiB with
   `estimate_k0` (estimate 8.1 GiB; 27.3 GiB before). On an 8 GB computer
   (4 GiB limit) the plain reconstruction fits with smaller chunks; with
-  `estimate_k0` it stops and offers a limit of 5.3 GB. The estimate is at or
+  `estimate_k0` (the default) it stops and offers a limit of 5.3 GB, and
+  `estimate_k0: false` fits. The estimate is at or
   above every measurement, by up to 2 x.
 - `allow_short_fid`: bool (default: true). A scan stopped before its last
   repetition leaves a FID shorter than `PVM_NRepetitions` frames need. The
@@ -284,6 +292,16 @@ repetition (frames still add up to the repetition image) and by `estimate_k0`. T
 take one float64 per sample of a repetition (0.58 GB for a 288,000-spoke scan at
 matrix 120; in the size check) and about 30 s. Default scans keep |k|^2 and their
 cache keys.
+
+- `golden_weights`: `capped` (default), `pipe` or `k2` (case-insensitive). The density
+  weights of a golden scan: `capped` is the rule above; `pipe` the same Pipe-Menon
+  estimate without the cap (less streaking, more noise in thinly covered k-space);
+  `k2` the |k|^2 weights of uniform straight spokes (no estimate, no extra memory or
+  time; the streaks described above). Each choice has its own recon cache; the
+  default `capped` keeps the caches made before the option existed. On a Default
+  scan the option changes nothing (a warning when it is not `capped`). The choice
+  is recorded in `scan._sordino_recon_meta["density_weights"]` (`k2` for Default
+  scans).
 
 Frames (golden scans; a Default scan with a spoke count):
 

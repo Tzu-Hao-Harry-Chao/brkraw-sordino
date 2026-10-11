@@ -45,6 +45,9 @@ def _frames():
 
 
 def _opts(tmp_path, **kw):
+    # these tests compare frames with direct reconstructions; estimate_k0 (on by default since
+    # D-0200 2) is off unless a test asks for it
+    kw.setdefault("estimate_k0", False)
     return _build_options({"cache_dir": str(tmp_path), **kw})
 
 
@@ -415,6 +418,10 @@ def test_k0_of_two_repetitions_is_the_estimate_of_their_mean(tmp_path):
 def _hook_env(monkeypatch, info, fid):
     monkeypatch.setattr(hook, "_parse_recon_info", lambda scan: dict(info))
     monkeypatch.setattr(hook, "_get_fid_entry", lambda scan: _Entry(fid))
+    # the references below are without the K0 estimate (on by default since D-0200 2)
+    real_build = hook._build_options
+    monkeypatch.setattr(hook, "_build_options",
+                        lambda kwargs: real_build({"estimate_k0": False, **kwargs}))
 
 
 def test_hook_returns_the_frames_and_records_them(tmp_path, monkeypatch):
