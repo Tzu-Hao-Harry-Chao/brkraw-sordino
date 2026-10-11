@@ -1,5 +1,10 @@
 # Unreleased (branch golden-weights-k0, on brkraw-060)
 
+Documentation (WI-0122, no behaviour change): `README.md` is now the short entry (description, install, hook install,
+minimal use). `brkraw hook docs sordino` (`src/brkraw_sordino/docs.md`) shows the option tables, defaults and cautions.
+The algorithms, with their equations, are in `docs/technical-note.md`. `tests/test_docs.py` keeps the option tables in
+step with the code.
+
 Behaviour changes for every scan:
 
 - Image grid (WI-0119): images are now placed where the scan's affine says

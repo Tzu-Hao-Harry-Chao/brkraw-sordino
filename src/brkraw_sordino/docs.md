@@ -1,62 +1,22 @@
-# brkraw-sordino
+# brkraw-sordino: options and practical notes
 
-SORDINO-ZTE reconstruction hook for BrkRaw.
+SORDINO-ZTE reconstruction hook for BrkRaw. This page is what `brkraw hook docs sordino`
+shows: how to pass options, what each option does, and what to watch for. The algorithms
+behind them are in `docs/technical-note.md` of the repository.
 
-## Install
-
-```bash
-pip install -e .
-```
-
-## Hook install
-
-```bash
-brkraw hook install brkraw-sordino
-```
-
-This installs the hook rule from the package manifest (`brkraw_hook.yaml`).
-
-## Usage
-
-Once installed, `brkraw` applies the hook automatically when a dataset matches the rule.
-
-Basic conversion:
-
-```bash
-brkraw convert /path/to/study --scan-id 3 --reco-id 1
-```
-
-The hook behaves the same whether invoked via the CLI or via the Python API (the same hook entrypoint and arguments are used).
-
-To explicitly pass hook options (or override defaults), use `--hook-arg` / `--hook-args-yaml` below.
-
-## Hook options
-
-Hook arguments can be passed via `brkraw convert` using `--hook-arg` with the
-entrypoint name (`sordino`):
+## Passing options
 
 ```bash
 brkraw convert /path/to/study -s 3 -r 1 \
-  --hook-arg sordino:ext_factors=1.2 \
-  --hook-arg sordino:offset=2 \
-  --hook-arg sordino:split_ch=false
+  --hook-arg sordino:ext_factors=1.2 --hook-arg sordino:offset=2 --hook-arg sordino:split_ch=false
 ```
 
-### Pass hook options via YAML (`--hook-args-yaml`)
-
-BrkRaw can also load hook arguments from YAML. Generate a template like this:
-
-```bash
-brkraw hook preset sordino -o hook_args.yaml
-```
-
-Edit the generated YAML, then pass it to `brkraw convert` (repeatable):
+Or from YAML. `brkraw hook preset sordino -o hook_args.yaml` writes a template with every
+reconstruction option at its default; edit it and pass it (repeatable):
 
 ```bash
 brkraw convert /path/to/study -s 3 -r 1 --hook-args-yaml hook_args.yaml
 ```
-
-Example:
 
 ```yaml
 hooks:
@@ -66,367 +26,123 @@ hooks:
     split_ch: false
     # as_complex: true  # optional, return (real, imag)
     # cache_dir: ~/.brkraw/cache/sordino  # optional (add manually if needed)
+    # frame_spokes: 3200      # golden scan: 20 subsets of 160 spokes, 2 s at a TR of 0.625 ms
+    # frame_accumulate: true  # frames of 3,200, 6,400, 9,600 ... spokes
 ```
 
-Notes:
+- `--hook-arg` values override YAML. YAML takes `{hooks: {sordino: {...}}}` or `{sordino: {...}}`.
+- `BRKRAW_CONVERT_HOOK_ARGS_YAML` holds comma-separated YAML paths.
+- Booleans are case-insensitive: `true`, `True`, `TRUE`, `false`, `False` (also `1`, `0`,
+  `yes`, `no`, `on`, `off`); anything else is an error.
+- A key the hook does not know is ignored with a one-line warning. `ramp_model` and
+  `correct_phase` were removed and have no alias.
 
-- CLI `--hook-arg` values override YAML.
-- YAML supports both `{hooks: {sordino: {...}}}` and `{sordino: {...}}` shapes.
-- You can also set `BRKRAW_CONVERT_HOOK_ARGS_YAML` (comma-separated paths).
+## Reconstruction options
 
-Supported keys:
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `ext_factors` | `1.0` | Scalar or 3 values. Enlarges the grid (so the FOV) at the same voxel size: axis `i` gets `int(Matrix[i] * ext_factors[i])` voxels (16 x 1.5 = 24, 16 x 1.1 = 17). Order: read, phase, slice of `PVM_Matrix`. |
+| `ignore_samples` | `1` | Samples dropped at the start of every spoke (0 is read as 1). |
+| `offset` | `0` | First repetition to reconstruct. |
+| `num_frames` | `null` | Repetitions to reconstruct from `offset` (`null`: all). |
+| `correct_ramptime` | `true` | Ramp-time correction: places each sample on the ramping gradient and removes the phase the FOV-offset frequency (`ACQ_O1_list`) leaves while it ramps. Off: every spoke keeps one fixed gradient vector, no phase correction. Timing values live in `timing.py`. |
+| `estimate_k0` | `true` | Fills the k-space centre that the dead time leaves unmeasured (SORDINO v1-v3): the dark centre of the adjoint image is filled. Changes the image and costs time and memory (see Cautions). `false` gives the plain adjoint. |
+| `correct_spoketiming` | `false` | Aligns every spoke to the centre of its repetition's scan time (needs several repetitions; not with frames). |
+| `offreso_freqs` | `null` | Off-resonance in Hz, one per receive channel: a number, a list or `"120,-80"`; all forms read the same, a non-finite value is refused. |
+| `golden_weights` | `capped` | Density weights of golden scans (case-insensitive): `capped` Pipe-Menon weights capped at the \|k\|^2 weight; `pipe` the same without the cap (less streaking, more noise in thinly covered k-space); `k2` the \|k\|^2 weights of uniform straight spokes (no estimate, no extra memory or time; streaks). Each choice has its own cache; `capped` keeps the caches made before the option existed. A Default scan always uses `k2` (a warning when the option is not `capped`). |
+| `split_ch` | `false` | `false` merges channels (magnitude: root sum of squares; complex: coherent sum). |
+| `as_complex` | `false` | Return `(real, imag)` instead of magnitude. |
+| `mem_limit` | `0.5` | GB for the FID segments of `correct_spoketiming` (divided by a safety factor 3.4). Not the reconstruction memory limit. |
+| `clear_cache` | `true` | Removes leftover temporary files after conversion; finished caches stay. |
+| `cache_dir` | `~/.brkraw/cache/sordino` | Cache folder (or `BRKRAW_CONFIG_HOME`). |
 
-- `ext_factors`: scalar or 3-item sequence (default: 1.0). Enlarges the
-  reconstruction grid, and so the field of view, at the same voxel size: axis `i`
-  gets `int(Matrix[i] * ext_factors[i])` voxels (16 x 1.5 -> 24, 16 x 1.1 -> 17).
-  The three values follow the **read/phase/slice acquisition order** of
-  `PVM_Matrix` (the reconstruction axes): index 0 = read, 1 = phase, 2 = slice.
-  They are not anatomical axes and not the axes of the output array: the hook
-  reorders the axes after reconstruction, so the anatomical direction each index
-  widens depends on the scan (slice orientation, read direction, subject type and
-  position). Measured example, two approved coronal scans (readout `H_F`,
-  Quadruped, `Head_Supine`, written in brkraw's default `subject_ras`): index 0
-  (read, along the bore, which is the animal's posterior-anterior axis for a
-  quadruped lying head first) widens posterior-anterior, index 1 (phase)
-  left-right, index 2 (slice, vertical in the magnet) inferior-superior; the output array holds index 1 on its axis 0
-  and index 0 on its axis 1. Check the mapping of your own protocol once (for
-  example with `[1.5, 1, 1]` and a look at which side grew) before relying on it.
-  A scalar or three equal values widen every axis, so the order does not matter
-  for them.
-  Naming caution: "RPS" is sometimes used for read/phase/slice, but in
-  neuroimaging RPS is also an orientation code (Right-Posterior-Superior). The
-  order here is the acquisition order, never an anatomical code.
-- `ignore_samples`: int (default: 1)
-- `offset`: int (default: 0)
-- `num_frames`: int or null (default: None)
-- `correct_spoketiming`: bool (default: false)
-- `correct_ramptime`: bool (default: true). One switch for the ramp-time
-  correction. On: each sample is placed at the time integral of the ramping
-  gradient from the RF centre (with the ramp window of the sequence version:
-  v1 `mjm_zte`, v2 `sordino_260122_trig`, v3 `sordino`, or a general ZTE with
-  a constant gradient) and the per-projection phase that the FOV-offset
-  frequency (`ACQ_O1_list`) leaves while the gradient ramps is removed. Off:
-  every spoke keeps one fixed gradient vector and no phase correction.
-  Timing values and adjustments are declared in `timing.py`.
-- `estimate_k0`: bool (default: true since WI-0113 run 6). Estimates the
-  k-space centre samples that the dead time leaves unmeasured, by a
-  least-squares image (one channel at a time, 10 conjugate-gradient
-  iterations), and adds them to the adjoint reconstruction. SORDINO v1-v3
-  only; on a general ZTE, or on a scan without the sequence timing values, it
-  is switched off with an info message. Set to true explicitly, it stops with
-  an error when `correct_ramptime` is false or the timing values are missing;
-  left at the default, it follows `correct_ramptime` (off with an info line
-  when that is false). It changes the image (the dark centre of the adjoint
-  image is filled; phantom scan 13: the K0 value 4.36e8 raw units, the same
-  within 1 % in scans 11 and 18) and makes the reconstruction slower and larger
-  (scan 13 1.4 s, golden scans 6.6 s more; the memory below). Set
-  `estimate_k0: false` for the plain adjoint (the result before this release;
-  recon caches made with the old default are found again only with it). The least-squares solve has
-  two forms that give the same image and K0 within the NUFFT tolerance. The
-  Toeplitz solve works on grids only (memory about 1 KiB per output voxel plus
-  64 MiB, whatever the sample count) and is the faster one. The sample solve
-  works at the samples (about 128 B per voxel plus 80 B per sample of a frame
-  plus 16 MiB). There is no option to choose: the hook picks the sample solve
-  only when its whole reconstruction estimate is at most half of the Toeplitz
-  one (a frame with few samples for its grid), or when the Toeplitz solve does
-  not fit the memory limit even with the smallest chunk and the sample solve
-  does; otherwise it uses the Toeplitz solve. An info log line names the solve
-  and the estimates. `get_dataobj_info` reports the choice (below).
-- `offreso_freqs`: float, list of floats or a string such as `"120,-80"` in Hz,
-  one per receive channel; every form reads as the same values and a value that
-  is not a finite number is refused (default: none).
-- `mem_limit`: float (default: 0.5)
-- `clear_cache`: bool (default: true)
-- `split_ch`: bool (default: false, merge channels)
-- `as_complex`: bool (default: false, return complex as (real, imag))
-- `cache_dir`: string path (default: ~/.brkraw/cache/sordino)
+Frames (golden scans; a Default scan only when `frame_spokes` is a spoke count). The spoke
+directions come from the method parameter `TrajectoryMode` (`Default`, `GoldenSampling`,
+`GoldenGridSampling`; older data without it are `Default`); the hook reads it, there is no option.
 
-Read-time options (they choose what is returned from the reconstruction
-cache and are not part of the cache key):
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `frame_spokes` | `null` | Spokes per frame. `null` or `subset`: the method subset, the smallest count that covers the sphere (`NGoldenSpokesPerSubset`; one grid frame). `repetition`: one repetition per frame. Integer: a spoke count. Default scans keep one repetition per frame (`subset` is refused). |
+| `frame_step` | `null` | Spokes between frame starts (`null`: `frame_spokes`). Smaller is a sliding window, larger leaves spokes out. |
+| `frame_accumulate` | `false` | Every frame starts at the first spoke and holds `frame_spokes` + k x `frame_step` spokes; the last one holds every spoke read. |
 
-- `frames`: which reconstructed frames to return, with the brkraw rules: an int
-  picks one frame and removes the frame axis, a list keeps the axis in that
-  order, `"start:stop[:step]"` is a Python slice. Frames count the
-  reconstructed frames (0 is frame `offset`). Only the selected frames are
-  read from the cache. The whole scan (or `num_frames` from `offset`) is still
-  reconstructed when no cache exists.
-- `axis`: optional; the frame axis is data axis 3 (`3`, `-1`, `"cycle"` or
-  `"repetition"`). `axis` without `frames` is an error.
-- `max_memory_gb`: float (default: half of this computer's physical memory,
-  4 GB when it cannot be read). Before it reconstructs or reads, the hook
-  estimates the memory of the returned data and the disk space of a new
-  cache, and stops with `SordinoResourceError` (a `MemoryError`) when the
-  memory estimate is above this limit or the cache does not fit on the disk.
-  Nothing is reconstructed or read in that case; ask for fewer frames or raise
-  the limit. The error's `retry_kwargs` holds the smallest limit (0.1 GB steps)
-  that would pass, for example `{"max_memory_gb": 1.8}`; the brkraw CLI uses it
-  to ask "Proceed anyway?" in a terminal. The estimate covers the returned
-  arrays and the read buffers, and, when no cache exists, the reconstruction
-  step that runs first in the same process (`recon_nbytes`). The
-  reconstruction goes through each frame in contiguous chunks of spokes (at
-  most about 13 M samples each), so its memory is a fixed part (the image of
-  every receiver and one NUFFT grid; with `estimate_k0` also its
-  least-squares solve) plus one chunk, and does not grow with the number of
-  spokes or frames. The `estimate_k0` solve runs either on grids (about 1 KiB
-  per output voxel, whatever the sample count) or at the samples (about 128 B
-  per voxel plus 80 B per sample of a frame). The grid solve is faster (1.2 to
-  8 x on the measured shapes), so the sample solve is used only when it at
-  most halves the whole estimate, that is when a frame has few samples for its
-  grid, or when only the sample solve fits the memory limit (for example a
-  160^3 scan with few spokes on an 8 GB computer); an info log line names the
-  choice. Both give the same image and K0
-  within the NUFFT tolerance. Example: a 128^3 grid with 12,800 x 64 samples
-  per frame measured 0.57 GiB with the sample solve (2.08 GiB on grids); a
-  64^3 grid with the same samples keeps the grid solve (0.42 GiB, 0.2 s per
-  frame, against 0.25 GiB and 0.8 s). What the limit leaves after
-  the read buffers sets the chunk size; the check stops only when even a
-  256-spoke chunk does not fit. With spoke-timing correction the estimate is
-  the larger of that and 5 x one FID segment, whose size follows `mem_limit`.
-  Example: a 160^3 scan with NPro 80876, NPoints 640 (OverSampling 8) and 2
-  receivers (synthetic FID, macOS, default limit) measured 3.0 GiB (estimate
-  4.1 GiB; 18.9 GiB before the chunked reconstruction), and 4.9 GiB with
-  `estimate_k0` (estimate 8.1 GiB; 27.3 GiB before). On an 8 GB computer
-  (4 GiB limit) the plain reconstruction fits with smaller chunks; with
-  `estimate_k0` (the default) it stops and offers a limit of 5.3 GB, and
-  `estimate_k0: false` fits. The estimate is at or
-  above every measurement, by up to 2 x.
-- `allow_short_fid`: bool (default: true). A scan stopped before its last
-  repetition leaves a FID shorter than `PVM_NRepetitions` frames need. The
-  hook measures the FID first; when it is short, it logs one warning (bytes
-  found, bytes the parameters need, bytes missing, complete frames out of the
-  planned ones) and reconstructs the complete frames only, so the output has
-  fewer frames than the parameters say (the NIfTI frame count is the number
-  of frames returned; voxel size, affine and TR are unchanged). The bytes of
-  the incomplete last frame are not used. `offset` and `num_frames` count
-  within the complete frames. It stops with a `ValueError` when no frame is
-  complete or `offset` is at or after the last complete frame. With `false`
-  a short FID stops with a `ValueError` before anything is reconstructed, as
-  earlier versions stopped (they stopped during the reconstruction). A FID of
-  the planned size or longer is read as before.
+Read-time options (they choose what is returned from the cache and are not part of its key):
 
-`brkraw_sordino.get_dataobj_info(scan, reco_id, **options)` returns the same
-estimate without reading data, for callers that decide before loading. It
-takes the same options as `get_dataobj` (`frames`, `axis`, `max_memory_gb`, the
-reconstruction options) and returns a dict with these keys:
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `frames` | `null` | Frames to return, brkraw rules: an int picks one and removes the frame axis, a list keeps the axis in that order, `"start:stop[:step]"` is a slice. Frame 0 is frame `offset`. Only these frames are read from a cache; with no cache the whole scan (or `num_frames`) is reconstructed. |
+| `axis` | `null` | The frame axis is data axis 3 (`3`, `-1`, `"cycle"` or `"repetition"`). `axis` without `frames` is an error. |
+| `max_memory_gb` | half of physical memory | Limit of the size check (4 GB when memory cannot be read). Over it, the hook stops before reconstructing or reading with `SordinoResourceError` (a `MemoryError`) whose `retry_kwargs` holds the smallest passing limit (0.1 GB steps), for example `{"max_memory_gb": 1.8}`; the brkraw CLI uses it to ask "Proceed anyway?". The cache must also fit on the disk. Ask for fewer frames or raise the limit. |
+| `allow_short_fid` | `true` | A scan stopped before its last repetition leaves a short FID. `true`: the hook measures the FID first and, when short, logs one warning (bytes found, needed, missing; complete frames of planned) and reconstructs only the complete frames; the bytes of the incomplete last frame are not used, the NIfTI frame count is the number of frames returned (voxel size, affine and TR unchanged), `offset` and `num_frames` count complete frames; a `ValueError` if none is complete or `offset` is at or after the last. `false`: a short FID stops with a `ValueError` before anything is reconstructed. A FID of the planned size or longer is read as usual. |
 
-- `shape`, `dtype`, `count`, `nbytes`: shape and real dtype string of each
-  returned array, how many arrays are returned (channels when `split_ch`, times
-  2 with `as_complex`), and the bytes of all of them.
-- `frames`, `frames_reconstructed`: frames returned, and frames in the
-  reconstruction (and its cache).
-- `cached`: a valid recon cache exists. `cache_path`, `cache_dir`,
-  `cache_dtype` (complex128 until a cache exists) and `cache_nbytes` describe
-  the cache file.
-- `peak_nbytes`: the memory estimate that is compared with the limit (the
-  returned arrays, three cache frames and, without a cache, `recon_nbytes`).
-- `recon_nbytes`, `recon_chunk_spokes`, `recon_chunks`: the reconstruction
-  step's estimate, spokes per chunk and number of chunks. Without a cache
-  these are the planned values; with a cache `recon_nbytes` is 0 and the other
-  two are null.
-- `recon_k0_method`: `"toeplitz"` or `"samples"` with `estimate_k0` and no
-  cache, otherwise null. `recon_k0_reason`: why it was chosen, `"rule"` (the
-  half rule above) or `"limit"` (only the sample solve fits the memory limit),
-  null when `recon_k0_method` is null.
-- `disk_nbytes`, `disk_free_nbytes`: disk a new cache needs (0 when cached)
-  and the free space in `cache_dir` (null when cached or unreadable).
-- `limit_nbytes`, `limit_source`: the memory limit that `get_dataobj`
-  applies, and where it comes from (`max_memory_gb option`,
-  `half of physical memory` or `fallback 4 GB`).
-- `frames_planned`, `fid_short_nbytes`: frames in the parameters
-  (`PVM_NRepetitions`), and the bytes the FID is short of them (0 when the FID
-  is complete, null when its size or the frame count cannot be read). With a short FID,
-  `frames_reconstructed` is the number of complete frames.
-
-Boolean values are read case-insensitively: `true`, `True`, `TRUE`, `false`,
-`False` (also `1`, `0`, `yes`, `no`, `on`, `off`), from YAML or from
-`--hook-arg`; any other value is an error. A key the hook does not know
-(including the removed `ramp_model` and `correct_phase`, which have no alias)
-is ignored with a one-line warning.
-
-## Golden trajectories and frames
-
-The `sordino` sequence (from `sordino_260801`) chooses the spoke directions with
-the method parameter `TrajectoryMode`, and the hook reads it; there is no option:
-`Default` (the radial list), `GoldenSampling` (`goldensamp.c`: golden means cut
-into subsets of `NGoldenSpokesPerSubset` spokes, reordered in z-stacks) and
-`GoldenGridSampling` (`goldengrid.c`: one spoke per equal-area cell per grid
-frame, plus the opposite spoke with `GridMirror`). Older data without the key are
-`Default`. The spoke order is checked against `ACQ_O1_list` (a warning when it
-does not match).
-
-The golden lists do not use the Default-trajectory parameters ProUnderSampling,
-`Reorder`, `HalfAcquisition` or `DirectMode`. A golden protocol may still carry an
-old value (the phantom scans 11 and 17 of WI-0112 keep ProUnderSampling 3.6147
-from an earlier Default setting); it changes nothing here. ParaVision's online
-reconstruction (pdata/1) does use it for Golden Grid: the first 12,732 lines of
-scan 17's `traj` file are the Default list for that value, so pdata/1 of a golden
-scan is not a reference image. In the sequence version of those scans
-(`sordino_260801`) the data show that the same list also reached the
-acquisition: the first 12,732 spokes of the Golden Grid scans (17, and 21 of the
-same session) fit the Default directions with the golden `ACQ_O1_list`
-frequencies, not the golden list; from spoke 12,732 on they fit the golden list
-(inferred from the data; ParaVision's internal order is not documented). They
-look like a movement of a few mm in the first 8 s; it is not motion.
-
-Golden Grid head (automatic, a warning, no option): for a `GoldenGridSampling` scan
-with `GoldenSampTraj = No` the hook reconstructs the first N spokes of every
-repetition (N = the count `radialGrad3D` gives for the scan's ProUnderSampling,
-12,732 for scans 17 and 21) along that Default list, with the receiver-frequency
-difference between the golden `ACQ_O1_list` and those directions applied over the
-sample time. Which list the scan carries is read from its `traj` file (its first
-lines are the Default list: rule on; the golden list, as a fixed sequence would
-write: rule off). Without a `traj` file the rule applies only to `sordino_260801`.
-
-Density weights: golden scans use sample-based (Pipe-Menon, 10 iterations) weights
-of one repetition's actual sample positions instead of |k|^2. With the ramp model a
-golden spoke bends from the previous direction, unevenly in the Golden Grid order,
-and |k|^2 then leaves direction-dependent streaks. Each weight is capped at its
-|k|^2 weight (the weight of uniform radial sampling at that radius) and one common
-factor then restores the sum, so relative to |k|^2 the weights are clipped at one level
-(1.32 x for phantom scan 11, 1.91 x for scan 17) instead of reaching 6-22 x on thinly
-covered samples; uncapped Pipe-Menon weights raise those samples and their noise (phantom scan
-17: NRMSE to the Default scan 0.244 with |k|^2, 0.234 uncapped, 0.126 capped; scan 11:
-0.115, 0.157, 0.108). The weights are computed spoke chunk by spoke chunk (no whole
-trajectory), scaled to the brightness of the |k|^2 image, used by every frame and
-repetition (frames still add up to the repetition image) and by `estimate_k0`. They
-take one float64 per sample of a repetition (0.58 GB for a 288,000-spoke scan at
-matrix 120; in the size check) and about 30 s. Default scans keep |k|^2 and their
-cache keys.
-
-- `golden_weights`: `capped` (default), `pipe` or `k2` (case-insensitive). The density
-  weights of a golden scan: `capped` is the rule above; `pipe` the same Pipe-Menon
-  estimate without the cap (less streaking, more noise in thinly covered k-space);
-  `k2` the |k|^2 weights of uniform straight spokes (no estimate, no extra memory or
-  time; the streaks described above). Each choice has its own recon cache; the
-  default `capped` keeps the caches made before the option existed. On a Default
-  scan the option changes nothing (a warning when it is not `capped`). The choice
-  is recorded in `scan._sordino_recon_meta["density_weights"]` (`k2` for Default
-  scans).
-
-Frames (golden scans; a Default scan with a spoke count):
-
-- A Default scan keeps one repetition per frame unless `frame_spokes` is a spoke
-  count (`subset` is refused: the Default list has no method subset). Its list goes
-  through the sphere in order, so a frame shorter than a repetition covers only part
-  of the sphere (a warning); accumulation then shows the coverage growing.
-
-- `frame_spokes`: spokes per frame. Default: the method subset, the smallest
-  count that covers the sphere (`NGoldenSpokesPerSubset`; one grid frame, cells
-  x 2 with `GridMirror`). `subset` says the same, `repetition` gives one
-  repetition per frame (as a Default scan), an integer is a spoke count.
-- `frame_step`: spokes between frame starts (default: `frame_spokes`). Smaller
-  gives a sliding window; larger leaves spokes out.
-- `frame_accumulate`: every frame starts at the first spoke; frame k holds
-  `frame_spokes` + k x `frame_step` spokes (default step `frame_spokes`: 1, 2, 3
-  ... x `frame_spokes`). The start does not move. The last accumulated frame always
-  holds every spoke read, also when the count is not a multiple of the step.
-- The repetitions read (`offset`, `num_frames`) form one stream of spokes, so
-  windows, sliding windows and accumulation run across repetition boundaries
-  (an info line counts such frames).
-- Any spoke range can be reconstructed. A frame that starts or ends inside a
-  method subset gets a warning (its directions cover the sphere less evenly:
-  3,200 spokes of scan 11 had a largest gap of 4.50 degrees from inside a
-  subset, 3.58 degrees from a subset start).
-- Each frame has the brightness of a one-repetition image (scaled by NPro over
-  its spoke count); the frames are the 4th axis of the result and of the NIfTI.
-- NIfTI time step: pixdim[4] is `frame_step` x the spoke TR (`PVM_RepetitionTime`),
-  in the time unit asked for (with accumulation: the growth between frames).
-  The frame list (spoke ranges, frame centre times, interval) is in
-  `scan._sordino_recon_meta["frames"]`.
-- `estimate_k0` with frames: the k-space centre is estimated once from all
-  spokes read and used by every frame. A window estimate is far too low (scan
-  11: 3-4 % of the all-spoke value from 160 spokes, 26-29 % from 3,200). With
-  several repetitions this also removes repetition-to-repetition changes of the
-  filled centre. If the object moves during the scan, the one value is the
-  average over its positions.
-- `correct_spoketiming` cannot be combined with frames (it moves every spoke of
-  a repetition to one time point); use `frame_spokes: repetition` with it.
-- Size: the recon cache holds one complex128 volume per frame. The default for
-  scan 11 (288,000 spokes, 160-spoke subsets, 120^3) is 1,800 frames: 49.8 GB of
-  cache (46.4 GiB), 24.9 GB as float64 magnitude in memory, 6.2 GB as a uint16
-  NIfTI. The size check runs before anything is reconstructed and stops with
-  the sizes; ask for larger frames, fewer repetitions (`num_frames`) or
-  `frame_spokes: repetition`. A sliding window also holds one copy of the
-  running sum per open frame start (`frame_spokes` / `frame_step` copies).
+Frames from the CLI (sliding window of 3,200 spokes every 1,600):
 
 ```bash
 brkraw convert /path/to/study -s 11 -r 1 \
-  --hook-arg sordino:frame_spokes=3200 \
-  --hook-arg sordino:frame_step=1600
+  --hook-arg sordino:frame_spokes=3200 --hook-arg sordino:frame_step=1600
 ```
 
-```yaml
-hooks:
-  sordino:
-    frame_spokes: 3200      # 20 subsets of 160 spokes, 2 s at a TR of 0.625 ms
-    frame_accumulate: true  # frames of 3,200, 6,400, 9,600 ... spokes
-```
+## Cautions
 
-## Notes
+- **`ext_factors` axes.** The three values follow the acquisition order (read, phase,
+  slice), not anatomical axes and not the output array axes: the hook reorders axes after
+  reconstruction, so which anatomical direction an index widens depends on the scan. Check
+  your protocol once (for example `[1.5, 1, 1]` and see which side grew). A scalar or three
+  equal values widen every axis, so the order does not matter for them. "RPS" is also an orientation code (Right-Posterior-Superior); here it is never
+  one. Example (two approved coronal scans, readout `H_F`, quadruped, `Head_Supine`,
+  `subject_ras`): index 0 widens posterior-anterior, 1 left-right, 2 inferior-superior; the
+  output array holds index 1 on axis 0 and index 0 on axis 1.
+- **`estimate_k0` is on by default** and costs time and memory (a 160^3 scan with NPro 80,876,
+  NPoints 640, OverSampling 8 and 2 receivers, synthetic FID, macOS, default limit: 3.0 GiB measured without
+  it, 4.9 GiB with it). Memory is a fixed part plus one chunk of
+  spokes and does not grow with spokes or frames. On an 8 GB computer (limit 4 GiB) such a scan
+  stops with an offer of a limit of 5.3 GB; `estimate_k0: false` fits. Set to `true`
+  explicitly it stops with an error when `correct_ramptime` is false or timing values are
+  missing; left at the default it is switched off with an info line then, and on a general
+  ZTE. Caches made before it became the default are found again only with `estimate_k0: false`.
+- **Golden frames need disk.** The cache holds one complex128 volume per frame and channel.
+  The default frames of a 288,000-spoke, 160-spoke-subset scan at 120^3 are 1,800 frames:
+  49.8 GB of cache (46.4 GiB), 24.9 GB as float64 magnitude in memory, 6.2 GB as uint16 NIfTI. The size
+  check runs first and stops with the sizes; use larger `frame_spokes`, fewer repetitions
+  (`num_frames`) or `frame_spokes: repetition`. A sliding window also keeps one running-sum
+  copy per open frame start (`frame_spokes` / `frame_step` copies).
+- **NIfTI is uint16 with slope and intercept.** Converted files are stored as 16-bit
+  integers; the true value is `inter + slope * stored`.
+- **Frames:** `correct_spoketiming` cannot be combined with frames (use
+  `frame_spokes: repetition`). `estimate_k0` is estimated once from all spokes read. NIfTI
+  `pixdim[4]` is `frame_step` x the spoke TR in the unit asked for. Frame spokes, centre times
+  and interval are in `scan._sordino_recon_meta["frames"]`.
+- **Grid shift and cache regeneration.** The image is placed where the brkraw affine says; the
+  reconstruction grid is moved by a derived shift (technical note, section 8). For the phantom
+  scans (axial) it is (0, 0, -0.5) voxel: earlier images sat half a voxel too high on the slice
+  axis. Recon caches written before this change are not read; they are reconstructed once.
+  ParaVision's own reconstruction (pdata/1) sits about half a voxel low on the slice axis; this
+  is not corrected here.
+- **Cache files** (`cache_dir`): `recon_<hash>.bin` (complex128, all frames) with its `.json`
+  (also `kspace_gap`, `k0`, `short_fid`). They stay for reuse until `brkraw cache clear`;
+  `clear_cache` removes only temporary files. The key covers scan, reco, FID and every option that
+  changes the values; `as_complex`, `split_ch`, `clear_cache`, `cache_dir` and the read-time
+  options are not in it, so changing them reads the same cache.
+- **Result metadata** (`scan._sordino_recon_meta`, also in the cache `.json`): `kspace_gap` (radius of
+  the unmeasured centre, first acquired and first kept sample), `k0` (`[real, imag]` per channel and
+  frame; with frames one estimate for all), `short_fid` (`fid_nbytes`, `expected_nbytes`,
+  `frame_nbytes`, `frames_planned`, `frames_complete`; null for a complete FID; a short FID has its
+  own cache), `frames`, `density_weights`. A Golden Grid head, if applied, logs a warning; no option.
 
-- The hook reconstructs data using an adjoint NUFFT and returns magnitude images by default.
-- Image grid (WI-0119): the image is placed where the brkraw affine says. The k-space phase
-  origin is the FOV centre `c` (the sequence moves it to the slice-pack position with the
-  receiver frequencies `ACQ_O1_list`); the adjoint NUFFT puts it at index `N // 2`, the affine
-  `A` at `A^-1 c`. The reconstruction moves its grid by `A^-1 c - N // 2` on each axis (a
-  linear phase on the samples; the affine is unchanged). `A` is the affine brkraw resolves for
-  the reco, its voxel-axis flips included (`ACQ_scaling_phase < 0`, coronal); `c` is the FOV
-  centre ParaVision records (`RECO_rotate * N` placed by `VisuCorePosition` and
-  `VisuCoreOrientation`), which on the phantom equals the slice-pack position (`PVM_SliceGeo`)
-  to 1e-6 mm. Without reco parameters (no affine) the grid stays at `N // 2`. For the phantom
-  scans (axial, 120^3 and 60^3) the shift is (0, 0, -0.5) voxel: before this change every image
-  sat half a voxel too high on the slice axis (0.1 mm at 0.2 mm voxels, 0.2 mm at 0.4 mm);
-  recon caches written before it are not read. Odd sizes, other planes and flipped axes follow
-  from the affine and are tested on synthetic affines only.
-- Why the slice axis differs (inference): ParaVision writes `RECO_rotate` 0.5, 0.5,
-  `0.5 - 0.5/N` = `(N - 1) / (2N)` for this method and for Bruker's own 3D methods seen
-  (FieldMap 64^3 sagittal, UTE3D 128^3 radial in the PV 360.3.5 and 3.6 example protocols), with
-  every offset and plane seen (axial, sagittal): the FOV centre sits at the FFT centre `N/2` on read and phase but at the
-  geometric centre `(N - 1)/2` of the partitions on the third axis, as slices of a slice pack
-  sit symmetrically about its position. The Bruker manuals and method sources available do not
-  give the formula (`ATB_SetRecoRotate` is in a closed library), so this reading is not
-  confirmed.
-- ParaVision's own reconstruction of the same scans (pdata/1) sits about half a voxel too low on
-  the slice axis (phantom, Default trajectory, 120^3 and 60^3: sordino minus ParaVision 0.94 and
-  1.02 voxels before this change, 0.48 and 0.45 after); its geometry parameters do not explain
-  it, so it is presumably in ParaVision's regridding (inference, not tested), and it is not
-  corrected here.
-- The k-space centre inside the dead time is not sampled and, unless `estimate_k0` is on, not filled. Its radius
-  (k-grid units, first acquired and first kept sample) is logged (info for a general
-  ZTE gap over one unit, debug otherwise) and kept as `scan._sordino_recon_meta["kspace_gap"]`
-  and in the recon cache `.json`. With `estimate_k0`, `scan._sordino_recon_meta["k0"]` and the
-  cache `.json` also hold the estimated K0 (`[real, imag]` per channel, for every frame;
-  with golden frames one estimate for all frames).
-- A short FID (see `allow_short_fid`) is kept with the result as
-  `scan._sordino_recon_meta["short_fid"]` and in the recon cache `.json`:
-  `fid_nbytes`, `expected_nbytes`, `frame_nbytes`, `frames_planned`,
-  `frames_complete` (null for a complete FID). Its recon cache is separate
-  from the cache of the complete scan.
-- Converted NIfTI outputs apply slope/intercept scaling for uint16 storage.
-- `ext_factors` keeps every object where it was: the affine keeps the voxel size and
-  direction and moves the origin by `-(N // 2 - N0 // 2)` voxels on each output axis
-  (`N` the extended size, `N0` the size at 1.0; the adjoint NUFFT puts the grid centre at
-  index `N // 2` for odd and even sizes, and the grid shift derived for `N0` above is applied
-  on the extended grid as well). When `N` and `N0` differ in parity the extra voxel
-  sits on one side, so the FOV centre moves by half a voxel while the objects do not.
-  Before this fix, a factor other than 1 on index 0 or 1 moved the image when the output
-  reorders those axes (measured: 1.6 mm on a 16^3 scan, 10 mm on a 60^3 scan), and a size
-  that is not a whole multiple (or an odd matrix) gave a sub-voxel shift (16 x 1.1: 0.3 mm).
-  `ext_factors=1` is unchanged, and the reconstruction and its cache key are unchanged
-  for every value.
-- Multi-channel data defaults to merged channels; set `split_ch=true` to keep channels split.
-- When `split_ch=false`, magnitude uses RSS while complex uses coherent sum.
-- Orientation is normalized when the first 3D axes are spatial; see `notebooks/orientation.ipynb`.
-- Cache files live under `~/.brkraw/cache/sordino` (or `BRKRAW_CONFIG_HOME`): `recon_<hash>.bin`
-  (complex128 reconstruction, all reconstructed frames) with its `.json`, and `traj_<hash>.npy`
-  (trajectory). `clear_cache` does not remove these files: they stay for reuse until
-  `brkraw cache clear`, and a temporary file left by an interrupted run is replaced by the next run.
-- The recon cache is keyed by the scan, reco, FID and every option that changes the reconstructed
-  values. `as_complex`, `split_ch`, `clear_cache` and `cache_dir` are not in the key (they choose
-  what is returned, what is cleaned up, or where the cache lives), so changing them reads the same
-  cache instead of reconstructing again. Recon caches written before this change are not read
-  (reconstructed once); remove them with `brkraw cache clear`.
-- The trajectory file is keyed only by the values that generate the trajectory (gradient
-  scheme, samples per spoke, and the sample offset or the ramp-model sample times), so options
-  such as `ext_factors` or frames reuse it. Trajectory files written before 0.6.0 (`<md5>.npy`)
-  are no longer read; they can be removed with `brkraw cache clear`.
+## Size estimate without reading data
+
+`brkraw_sordino.get_dataobj_info(scan, reco_id, **options)` takes the options of `get_dataobj`
+and returns a dict:
+
+| Key | Content |
+| --- | --- |
+| `shape`, `dtype`, `count`, `nbytes` | each returned array, how many (channels with `split_ch`, x 2 with `as_complex`), total bytes |
+| `frames`, `frames_reconstructed` | frames returned; frames in the reconstruction and its cache |
+| `cached`, `cache_path`, `cache_dir`, `cache_dtype`, `cache_nbytes` | a valid cache exists and its file (`cache_dtype` is complex128 until one exists) |
+| `peak_nbytes` | the estimate compared with the limit: returned arrays, three cache frames, and without a cache `recon_nbytes` |
+| `recon_nbytes`, `recon_chunk_spokes`, `recon_chunks` | reconstruction step estimate, spokes per chunk, chunks (0 and null when cached) |
+| `recon_frames_open`, `recon_dcf_nbytes` | running-sum copies held at once with frames (null without); bytes of the golden density weights and their grid (0 otherwise) |
+| `recon_k0_method`, `recon_k0_reason` | `"toeplitz"` or `"samples"` (with `estimate_k0`, no cache); `"rule"` or `"limit"` |
+| `disk_nbytes`, `disk_free_nbytes` | disk a new cache needs (0 when cached), free space (null when cached or unreadable) |
+| `limit_nbytes`, `limit_source` | the limit `get_dataobj` applies; `max_memory_gb option`, `half of physical memory` or `fallback 4 GB` |
+| `frames_planned`, `fid_short_nbytes` | frames in `PVM_NRepetitions`; bytes the FID is short (0 complete, null unknown); with a short FID `frames_reconstructed` is the complete frames |
