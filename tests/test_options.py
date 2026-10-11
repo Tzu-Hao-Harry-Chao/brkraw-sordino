@@ -13,7 +13,8 @@ def _opts(tmp_path, **kw):
 
 def test_defaults(tmp_path):
     o = _opts(tmp_path)
-    assert o.correct_ramptime is True and o.estimate_k0 is False
+    # estimate_k0 is on by default since WI-0113 run 6 (D-0200 2); tests/test_k0_default.py
+    assert o.correct_ramptime is True and o.estimate_k0 is True
     assert not hasattr(o, "ramp_model") and not hasattr(o, "correct_phase")
 
 
