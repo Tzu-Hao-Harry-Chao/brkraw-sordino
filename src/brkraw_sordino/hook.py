@@ -29,6 +29,8 @@ from .recon import (
     get_dataobj_shape,
     get_num_frames,
     grid_shift,
+    grid_shift_from_affine,
+    paravision_fov_centre,
     parse_fid_info,
     parse_volume_shape,
     recon_dataobj,
@@ -329,9 +331,9 @@ def _build_cache_params(
         "options": keyed,
         "recon_info": recon_info,
         "timing_tuning": {k: asdict(v) for k, v in TIMING_TUNING.items()},
-        # ParaVision's grid (WI-0119): every image moved by half a voxel on the slice axis,
-        # so caches written before it are not read
-        "grid": {"rule": GRID_RULE, "shift": list(grid_shift(recon_matrix(recon_info)))},
+        # the grid derived from the affine (WI-0119, also inside recon_info["GridShift"]):
+        # images moved by half a voxel on the slice axis, so caches written before it are not read
+        "grid": {"rule": GRID_RULE, "shift": list(grid_shift(recon_info))},
     }
     if frame_plan is not None:
         params["frames"] = frame_plan.key()
@@ -671,10 +673,46 @@ def _output_info(recon_info: Dict[str, Any], options: Options, cached_shape, cac
 RECON_CACHE_DTYPE = np.dtype("<c16")
 
 
+def _grid_shift(scan: Any, reco_id: Optional[int], recon_info: Dict[str, Any]) -> Optional[Tuple[float, float, float]]:
+    """Grid shift that puts the image where the scan's brkraw affine says (WI-0119, D-0207), or None.
+
+    ``A^-1 c - N // 2`` per output axis, in reconstruction order: ``A`` the affine brkraw
+    resolves for the reco (its voxel-axis flips included; the subject-pose and RAS steps
+    are world-side and do not change the result), ``c`` the FOV centre ParaVision records
+    (``recon.paravision_fov_centre``). None (grid left at the NUFFT centre ``N // 2``) when
+    the scan has no reco parameters, several slice packs, or values the centre cannot be
+    read from.
+    """
+    try:
+        from brkraw.apps.loader.helper import resolve_reco_id
+        from brkraw.resolver import affine as affine_resolver
+
+        rid = resolve_reco_id(scan, reco_id)
+        if rid is None:
+            return None
+        resolved = affine_resolver.resolve(scan, rid, decimals=12)
+        if not resolved or int(resolved["num_slice_packs"]) != 1:
+            return None
+        reco = scan.avail[rid]
+        centre = paravision_fov_centre(getattr(reco, "visu_pars"), getattr(reco, "reco"))
+        if centre is None:
+            logger.info("sordino: the FOV centre could not be read from the reco parameters; the image "
+                        "grid stays at the NUFFT centre.")
+            return None
+        return grid_shift_from_affine(resolved["affines"][0], centre, orientation_axis_order(recon_info),
+                                      recon_matrix(recon_info))
+    except Exception as exc:  # noqa: BLE001  (no reco / parameters: no affine to follow)
+        logger.debug("sordino: grid shift not derived (%s).", exc)
+        return None
+
+
 def _plan(scan: Any, reco_id: Optional[int], kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Options, cache paths, cache state, frame selection and the size estimate."""
     options = _build_options(kwargs)
     recon_info = _parse_recon_info(scan)
+    shift = _grid_shift(scan, reco_id, recon_info)
+    if shift is not None:
+        recon_info["GridShift"] = list(shift)       # read by recon_dataobj / recon_frames, keyed
     try:
         options = _resolve_k0(options, recon_info)
     except K0TimingError as exc:

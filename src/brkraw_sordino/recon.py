@@ -5,7 +5,7 @@ import hashlib
 import platform
 from pathlib import Path
 import numpy as np
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Tuple, Optional, cast
 from numpy.typing import NDArray
 from mrinufft import get_operator
 import logging
@@ -24,28 +24,86 @@ def build_recon_cache_path(cache_dir: Path, cache_params: Dict[str, Any]) -> Pat
     cache_hash = _hash_cache_params(cache_params, salt="recon")
     return cache_dir / f"recon_{cache_hash}.bin"
 
-#: The image grid rule as it enters the recon cache key (WI-0119).
-GRID_RULE = "paravision-3d"
+#: The image grid rule as it enters the recon cache key (WI-0119 run 2, D-0207).
+GRID_RULE = "affine-fov-centre"
 
 
-def grid_shift(matrix) -> Tuple[float, float, float]:
-    """Voxel shift from the adjoint NUFFT grid to ParaVision's grid, per reconstruction axis (WI-0119).
+def grid_shift_from_affine(affine, centre, axis_order, matrix) -> Tuple[float, float, float]:
+    """Voxel shift of the adjoint NUFFT grid that puts the image where ``affine`` says (WI-0119).
 
-    ParaVision places the FOV centre (the k-space phase origin; the receiver
-    frequencies ``ACQ_O1_list`` move it to the slice-pack offset) at index
-    ``RECO_rotate * N``: ``N / 2`` on read and phase and ``N / 2 - 0.5`` on the
-    slice axis of a 3D scan (``RECO_rotate`` 0.5, 0.5, 0.5 - 0.5 / N, written by the
-    method's reco and by Bruker's own 3D methods), and ``VisuCorePosition``, so the
-    brkraw affine, describes that grid. The type-1 NUFFT puts the origin at ``N // 2``.
-    The shift is ``target - N // 2``: (0, 0, -0.5) for even sizes. ``matrix`` is the
-    acquisition matrix (``Matrix``, read/phase/slice); with ``ext_factors`` the same
-    shift applies on the extended grid, whose affine moves by whole voxels.
+    The k-space phase origin of the scan is the FOV centre ``centre`` (world point, the
+    frame of ``affine``): the sequence moves it to the slice-pack position with the
+    receiver frequencies. The type-1 NUFFT puts that point at index ``N // 2`` of each
+    reconstruction axis; the affine (output index -> world) puts it at ``A^-1 centre``.
+    The shift is ``A^-1 centre - N // 2`` per output axis, moved to the reconstruction
+    axis it holds (``axis_order[j]`` is the reconstruction axis on output axis ``j``,
+    ``orientation.axis_order``). Returned in reconstruction order (read, phase, slice),
+    rounded to 1e-6 voxel. ``matrix`` is the acquisition matrix (``ext_factors`` 1); a
+    world-side transform of affine and centre (subject pose, RAS) leaves it unchanged,
+    and a flipped affine axis (``i -> N - 1 - i``) moves the centre with it.
     """
+    order = [int(v) for v in axis_order]
     n = [int(v) for v in matrix]
-    if len(n) != 3:
-        raise ValueError(f"grid_shift needs a 3D matrix, got {matrix!r}")
-    target = [n[0] / 2.0, n[1] / 2.0, n[2] / 2.0 - 0.5]
-    return tuple(float(target[i] - (n[i] // 2)) for i in range(3))
+    if len(order) != 3 or len(n) != 3 or sorted(order) != [0, 1, 2]:
+        raise ValueError(f"grid shift needs three axes, got order {axis_order!r}, matrix {matrix!r}")
+    A = np.asarray(affine, dtype=float)
+    M, t = A[:3, :3], A[:3, 3]
+    if abs(np.linalg.det(M)) < 1e-12:
+        raise ValueError("grid shift needs an invertible affine")
+    idx = np.linalg.solve(M, np.asarray(centre, dtype=float).reshape(3) - t)
+    shift = [0.0, 0.0, 0.0]
+    for j in range(3):
+        i = order[j]
+        shift[i] = round(float(idx[j]) - (n[i] // 2), 6) + 0.0
+    return cast(Tuple[float, float, float], tuple(shift))
+
+
+def paravision_fov_centre(visu_pars, reco_pars) -> Optional[np.ndarray]:
+    """The FOV centre (world point, the frame of ``VisuCorePosition``) that ParaVision records, or None.
+
+    ParaVision writes where the k-space phase origin sits on its image grid as
+    ``RECO_rotate * N`` per reconstruction axis (acquisition order; ``RECO_transposition``
+    1 swaps the first two image axes), and ``VisuCorePosition`` (first voxel centre),
+    ``VisuCoreOrientation`` (rows: image axis directions) and the voxel size place that
+    grid in the world, which is what the brkraw affine is built from. For the sordino
+    and Bruker 3D methods seen so far ``RECO_rotate`` is (0.5, 0.5, 0.5 - 0.5 / N)
+    without offsets (the offsets are frequency shifts); on the phantom this point is the
+    slice-pack position (``PVM_SliceGeo``). None when a value is missing, the data are not
+    3D, another transposition is set, or the sizes disagree.
+    """
+    try:
+        if int(np.ravel(visu_pars.get("VisuCoreDim"))[0]) != 3:
+            return None
+        pos = np.asarray(visu_pars.get("VisuCorePosition"), dtype=float).reshape(-1)[:3]
+        orient = np.asarray(visu_pars.get("VisuCoreOrientation"), dtype=float).reshape(-1)[:9].reshape(3, 3)
+        size = np.asarray(visu_pars.get("VisuCoreSize"), dtype=float).reshape(-1)[:3]
+        extent = np.asarray(visu_pars.get("VisuCoreExtent"), dtype=float).reshape(-1)[:3]
+        rot = np.asarray(reco_pars.get("RECO_rotate"), dtype=float)
+        rot = rot[:, 0] if rot.ndim == 2 and rot.shape[0] == 3 else rot.reshape(-1)
+        if pos.size != 3 or size.size != 3 or extent.size != 3 or rot.size != 3:
+            return None
+        trans = reco_pars.get("RECO_transposition")
+        t = 0 if trans is None else int(np.ravel(trans)[0])
+        perm = {0: (0, 1, 2), 1: (1, 0, 2)}.get(t)
+        if perm is None:
+            return None
+        acq = reco_pars.get("RECO_size")
+        acq_size = (np.asarray(acq, dtype=float).reshape(-1)[:3] if acq is not None
+                    else np.array([size[perm.index(i)] for i in range(3)]))
+        if any(acq_size[perm[j]] != size[j] for j in range(3)):
+            return None
+        idx = np.array([rot[perm[j]] * acq_size[perm[j]] for j in range(3)])
+        return pos + orient.T @ (extent / size * idx)
+    except (TypeError, ValueError, IndexError, AttributeError, KeyError):
+        return None
+
+
+def grid_shift(recon_info: Dict[str, Any]) -> Tuple[float, float, float]:
+    """The grid shift the hook derived (``recon_info["GridShift"]``, reconstruction order), else none."""
+    s = recon_info.get("GridShift")
+    if s is None:
+        return (0.0, 0.0, 0.0)
+    return cast(Tuple[float, float, float], tuple(float(v) for v in s))
 
 
 def recon_matrix(recon_info: Dict[str, Any]) -> list:
@@ -522,7 +580,7 @@ def recon_dataobj(fid_fobj,
             kernel.finish(1.0)
             w_virtual = weights.virtual()
     nf = serial.norm_factor(volume_shape)
-    shift = grid_shift(recon_matrix(recon_info))
+    shift = grid_shift(recon_info)           # derived from the affine by the hook (WI-0119)
 
     dtype = None
     reuse = len(ranges) == 1          # one chunk: points and weights stay set for every frame
@@ -557,7 +615,7 @@ def recon_dataobj(fid_fobj,
                 tr = rows(lo, hi)[:, ignore_samples:]
                 # kept for every frame when reuse
                 w = serial.density(tr) / dmax if weights is None else weights.chunk(lo, hi)
-                g = grid_shift_factor(tr, shift)       # ParaVision's grid (WI-0119)
+                g = grid_shift_factor(tr, shift)       # the affine's grid (WI-0119)
                 if g is not None:
                     w = w * g.reshape(-1)
                 del g

@@ -307,7 +307,7 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
     """
     from . import memguard, serial
     from .recon import (_row_source, correct_offreso, grid_shift, grid_shift_factor, parse_fid_info,
-                        parse_volume_shape, recon_matrix)
+                        parse_volume_shape)
 
     img_fobj.seek(0)
     fid_shape, fid_dtype = parse_fid_info(recon_info)
@@ -379,7 +379,7 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
             kernel.finish(float(plan.n_rep))
             w_virtual = weights.virtual().reshape(npro, int(virtual_traj.shape[1]))
     nf = serial.norm_factor(vol)
-    shift = grid_shift(recon_matrix(recon_info))       # ParaVision's grid (WI-0119)
+    shift = grid_shift(recon_info)       # derived from the affine by the hook (WI-0119)
     adj = serial.Adjoint(vol)
 
     def add_range(acc, g_lo, g_hi, preds=None):
