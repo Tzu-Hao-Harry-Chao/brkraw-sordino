@@ -90,7 +90,10 @@ def _fid_frames(info, traj, n_frames, n_rx, factor):
 
 def _reference(frames, info, options, traj, factor, virtual_traj, offset=0, n_frames=None):
     """The 366f5fc method on whole arrays: per frame and channel, phase factor, trim,
-    off-resonance, then nufft_adjoint or kcentre.fill_centre."""
+    off-resonance, then nufft_adjoint or kcentre.fill_centre; since WI-0119 the samples
+    are put on ParaVision's grid first (``test_grid_centre.pv_grid``)."""
+    from test_grid_centre import pv_grid
+
     n_rx = int(info["EncNReceivers"])
     ign = options.ignore_samples or 1
     tr = traj[:, ign:, :]
@@ -109,6 +112,7 @@ def _reference(frames, info, options, traj, factor, virtual_traj, offset=0, n_fr
             if isinstance(freqs, tuple) and len(freqs) > c:
                 kc = recon.correct_offreso(kc, freqs[c], eff_bandwidth=info["EffBandwidth_Hz"],
                                            over_sampling=info["OverSampling"])
+            kc = pv_grid(kc, tr, SHAPE)          # ParaVision's grid (WI-0119)
             if virtual_traj is None:
                 chans.append(nufft_adjoint(kc, tr, SHAPE, 1))
             else:

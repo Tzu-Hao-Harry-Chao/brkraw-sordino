@@ -195,6 +195,11 @@ def test_recon_cache_key_and_shape_are_unchanged(tmp_path, ext, pin):
     options = hook._build_options(kw)
     params = hook._build_cache_params(_Scan(), None, _Fid(), options, _recon_info(1))
     name, shape = PINNED[pin]
+    # WI-0119 added the grid rule to every key (ParaVision's grid); without it the key is the
+    # pinned one, so ext_factors still changes the affine only
+    from brkraw_sordino import recon
+    grid = params.pop("grid")
+    assert grid == {"rule": recon.GRID_RULE, "shift": [0.0, 0.5, -0.5]}      # Matrix 4 x 5 x 6
     assert build_recon_cache_path(tmp_path, params).name == name
     assert list(parse_volume_shape(_recon_info(1), options)) == shape
 

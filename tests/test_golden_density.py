@@ -213,6 +213,8 @@ def test_golden_hook_uses_the_sample_weights(tmp_path, monkeypatch, mode):
     img = _hook_image(tmp_path / "h", monkeypatch, info, fid)[..., 0]
     vol = np.frombuffer(fid, dtype="<i4").reshape((2, N_POINTS, 1, info["NPro"]), order="F")
     k = ((vol[0] + 1j * vol[1]).T[:, 0, :]) * factor
+    from test_grid_centre import pv_grid
+    k = pv_grid(k, traj, SHAPE)                       # ParaVision's grid (WI-0119)
     w, _ = _pipe_reference(traj[:, 1:, :], SHAPE)
     ref = correct_orientation(_weighted_adjoint(k[:, 1:], traj[:, 1:, :], SHAPE, w), info)
     assert _rel(img, ref) < 1e-8

@@ -306,7 +306,8 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
     (the K0 solve would still hold the excluded spokes): WI-0118 decides that case.
     """
     from . import memguard, serial
-    from .recon import _row_source, correct_offreso, parse_fid_info, parse_volume_shape
+    from .recon import (_row_source, correct_offreso, grid_shift, grid_shift_factor, parse_fid_info,
+                        parse_volume_shape, recon_matrix)
 
     img_fobj.seek(0)
     fid_shape, fid_dtype = parse_fid_info(recon_info)
@@ -378,6 +379,7 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
             kernel.finish(float(plan.n_rep))
             w_virtual = weights.virtual().reshape(npro, int(virtual_traj.shape[1]))
     nf = serial.norm_factor(vol)
+    shift = grid_shift(recon_matrix(recon_info))       # ParaVision's grid (WI-0119)
     adj = serial.Adjoint(vol)
 
     def add_range(acc, g_lo, g_hi, preds=None):
@@ -401,6 +403,10 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
                         k[:, ch, :] = correct_offreso(k[:, ch, :], freq, eff_bandwidth=bw, over_sampling=osf)
                 tr = rows(a, b)[:, ign:]
                 w = serial.density(tr) / dmax if weights is None else weights.chunk(a, b)
+                g = grid_shift_factor(tr, shift)
+                if g is not None:          # measured samples only; the predicted centre samples
+                    w = w * g.reshape(-1)  # come from the solve on the shifted grid already
+                del g
                 adj.setpts(tr)
                 del tr
                 for ch in range(n_rx):

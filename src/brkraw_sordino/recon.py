@@ -24,6 +24,54 @@ def build_recon_cache_path(cache_dir: Path, cache_params: Dict[str, Any]) -> Pat
     cache_hash = _hash_cache_params(cache_params, salt="recon")
     return cache_dir / f"recon_{cache_hash}.bin"
 
+#: The image grid rule as it enters the recon cache key (WI-0119).
+GRID_RULE = "paravision-3d"
+
+
+def grid_shift(matrix) -> Tuple[float, float, float]:
+    """Voxel shift from the adjoint NUFFT grid to ParaVision's grid, per reconstruction axis (WI-0119).
+
+    ParaVision places the FOV centre (the k-space phase origin; the receiver
+    frequencies ``ACQ_O1_list`` move it to the slice-pack offset) at index
+    ``RECO_rotate * N``: ``N / 2`` on read and phase and ``N / 2 - 0.5`` on the
+    slice axis of a 3D scan (``RECO_rotate`` 0.5, 0.5, 0.5 - 0.5 / N, written by the
+    method's reco and by Bruker's own 3D methods), and ``VisuCorePosition``, so the
+    brkraw affine, describes that grid. The type-1 NUFFT puts the origin at ``N // 2``.
+    The shift is ``target - N // 2``: (0, 0, -0.5) for even sizes. ``matrix`` is the
+    acquisition matrix (``Matrix``, read/phase/slice); with ``ext_factors`` the same
+    shift applies on the extended grid, whose affine moves by whole voxels.
+    """
+    n = [int(v) for v in matrix]
+    if len(n) != 3:
+        raise ValueError(f"grid_shift needs a 3D matrix, got {matrix!r}")
+    target = [n[0] / 2.0, n[1] / 2.0, n[2] / 2.0 - 0.5]
+    return tuple(float(target[i] - (n[i] // 2)) for i in range(3))
+
+
+def recon_matrix(recon_info: Dict[str, Any]) -> list:
+    """The acquisition matrix as ``parse_volume_shape`` reads it (``Matrix``, else ``NPoints`` x 3)."""
+    matrix = recon_info.get("Matrix")
+    if matrix is None:
+        matrix = [int(recon_info.get("NPoints") or 0)] * 3
+    return [int(v) for v in matrix]
+
+
+def grid_shift_factor(traj: np.ndarray, shift) -> Optional[np.ndarray]:
+    """``exp(-i omega . shift)`` per sample of ``traj`` (shape ``traj.shape[:-1]``), or None for no shift.
+
+    Multiplying the samples by it before the adjoint evaluates the image at grid
+    points moved by ``shift`` voxels (an object at ``d`` lands on index
+    ``N // 2 + shift + d``). It is a phase only, so the density weights and the
+    estimate_k0 normal operator are unchanged; the K0 solve then works on the shifted
+    grid and its predicted samples need no factor.
+    """
+    s = np.asarray(shift, dtype=float)
+    if not np.any(s):
+        return None
+    om = np.asarray(traj, dtype=float) / 0.5 * np.pi
+    return np.exp(-1j * (om @ s))
+
+
 def _get_current_rss_gb() -> Optional[float]:
     if platform.system() != "Linux":
         return None
@@ -474,6 +522,7 @@ def recon_dataobj(fid_fobj,
             kernel.finish(1.0)
             w_virtual = weights.virtual()
     nf = serial.norm_factor(volume_shape)
+    shift = grid_shift(recon_matrix(recon_info))
 
     dtype = None
     reuse = len(ranges) == 1          # one chunk: points and weights stay set for every frame
@@ -508,6 +557,10 @@ def recon_dataobj(fid_fobj,
                 tr = rows(lo, hi)[:, ignore_samples:]
                 # kept for every frame when reuse
                 w = serial.density(tr) / dmax if weights is None else weights.chunk(lo, hi)
+                g = grid_shift_factor(tr, shift)       # ParaVision's grid (WI-0119)
+                if g is not None:
+                    w = w * g.reshape(-1)
+                del g
                 adj.setpts(tr)
                 del tr
             for ch in range(n_receivers):

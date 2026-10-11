@@ -24,12 +24,15 @@ from . import frames as frames_mod
 from . import dcf, golden, kcentre
 from .traj import get_trajectory, trajectory_rows  # noqa: F401  (get_trajectory: tests patch it)
 from .recon import (
+    GRID_RULE,
     build_recon_cache_path,
     get_dataobj_shape,
     get_num_frames,
+    grid_shift,
     parse_fid_info,
     parse_volume_shape,
     recon_dataobj,
+    recon_matrix,
 )
 from .spoketiming import (
     build_spoketiming_cache_path,
@@ -326,6 +329,9 @@ def _build_cache_params(
         "options": keyed,
         "recon_info": recon_info,
         "timing_tuning": {k: asdict(v) for k, v in TIMING_TUNING.items()},
+        # ParaVision's grid (WI-0119): every image moved by half a voxel on the slice axis,
+        # so caches written before it are not read
+        "grid": {"rule": GRID_RULE, "shift": list(grid_shift(recon_matrix(recon_info)))},
     }
     if frame_plan is not None:
         params["frames"] = frame_plan.key()
