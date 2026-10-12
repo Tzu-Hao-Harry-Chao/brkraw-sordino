@@ -129,6 +129,15 @@ brkraw convert /path/to/study -s 11 -r 1 \
   `frame_nbytes`, `frames_planned`, `frames_complete`; null for a complete FID; a short FID has its
   own cache), `frames`, `density_weights`. A Golden Grid head, if applied, logs a warning; no option.
 
+## For developers: tests and manual checks
+
+`tests/` holds only tests on synthetic data; `pytest tests` needs no dataset and the CI never reads one.
+Checks that read a real dataset are scripts in `scripts/validate/` (named `check_*.py`, so a plain `pytest` does not
+collect them) and are run by hand, when wanted: `BRKRAW_SORDINO_GOLDEN_ZIP=/path/to/phantom.zip pytest -v
+scripts/validate/check_golden_phantom.py scripts/validate/check_grid_centre_phantom.py`. Without the variable they stop
+with a message. They compare the golden trajectories with the scanner's `traj` file and the derived grid shift with
+the phantom's recorded geometry.
+
 ## Size estimate without reading data
 
 `brkraw_sordino.get_dataobj_info(scan, reco_id, **options)` takes the options of `get_dataobj`

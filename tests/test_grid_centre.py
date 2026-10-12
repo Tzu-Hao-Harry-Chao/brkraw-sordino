@@ -14,9 +14,11 @@ phantom it equals the slice-pack position the sequence frequency-shifts to.
 Run 1 hard-coded ParaVision's 3D rule ``(N/2, N/2, N/2 - 0.5)``; run 2 derives the same
 numbers for the phantom from the affine, and follows the affine where the rule was a
 guess: odd sizes, other planes, flipped affine axes (``ACQ_scaling_phase < 0``).
+
+The check on the phantom dataset (real data) is a manual script,
+``scripts/validate/check_grid_centre_phantom.py`` (WI-0123).
 """
 import io
-import os
 
 import numpy as np
 import pytest
@@ -273,46 +275,3 @@ def test_the_grid_shift_is_in_the_recon_cache_key(tmp_path):
     assert shifted["grid"] == {"rule": recon.GRID_RULE, "shift": [0.0, 0.0, -0.5]}
     from brkraw_sordino.recon import build_recon_cache_path
     assert build_recon_cache_path(tmp_path, plain).name != build_recon_cache_path(tmp_path, shifted).name
-
-
-# --- the phantom: the derivation gives run 1's numbers --------------------------------------
-
-ZIP = os.environ.get("BRKRAW_SORDINO_GOLDEN_ZIP")
-
-
-def _slicegeo_position(geo):
-    if isinstance(geo, (list, tuple)):
-        if (len(geo) >= 2 and isinstance(geo[0], (list, tuple)) and len(geo[0]) == 9
-                and isinstance(geo[1], (list, tuple)) and len(geo[1]) == 3):
-            return np.array([float(v) for v in geo[1]])
-        for g in geo:
-            r = _slicegeo_position(g)
-            if r is not None:
-                return r
-    return None
-
-
-@pytest.mark.skipif(not ZIP or not os.path.exists(ZIP or ""), reason="phantom zip not available")
-@pytest.mark.parametrize("sid, n", [(13, 120), (18, 60)])
-def test_phantom_shift_from_the_affine_is_run_1s(sid, n):
-    """Scans 13 and 18 (axial, even): the derived shift is exactly (0, 0, -0.5), and the FOV centre
-    ParaVision records is the slice-pack position the sequence frequency-shifts to."""
-    import brkraw
-
-    scan = brkraw.load(ZIP).get_scan(sid)
-    info = hook._parse_recon_info(scan)
-    assert hook._grid_shift(scan, None, info) == (0.0, 0.0, -0.5)
-    reco = scan.get_reco(1)
-    c = recon.paravision_fov_centre(reco.visu_pars, reco.reco)
-    assert c == pytest.approx(_slicegeo_position(scan.method.get("PVM_SliceGeo")), abs=1e-6)
-    assert np.asarray(info["Matrix"]).tolist() == [n, n, n]
-
-
-@pytest.mark.skipif(not ZIP or not os.path.exists(ZIP or ""), reason="phantom zip not available")
-def test_phantom_plan_carries_the_shift_into_recon_info_and_key(tmp_path):
-    import brkraw
-
-    scan = brkraw.load(ZIP).get_scan(18)
-    plan = hook._plan(scan, None, {"cache_dir": str(tmp_path)})
-    assert plan["recon_info"]["GridShift"] == [0.0, 0.0, -0.5]
-    assert plan["cache_params"]["grid"] == {"rule": recon.GRID_RULE, "shift": [0.0, 0.0, -0.5]}

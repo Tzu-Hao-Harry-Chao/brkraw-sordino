@@ -1,8 +1,14 @@
-"""Golden trajectories against what the scanner recorded (WI-0113, CP1; local data only).
+"""Golden trajectories against what the scanner recorded (WI-0113, CP1; manual check, real data).
 
-Runs only when ``BRKRAW_SORDINO_GOLDEN_ZIP`` names the phantom dataset with the
-scans 11 (GoldenSampling), 13 (Default), 17 (GoldenGridSampling) and 18 (Default,
-matrix 60); skipped otherwise. No FID is read.
+Manual validation script, not a unit test (WI-0123): it reads the phantom dataset, so it
+lives outside ``tests/`` and is neither collected by a plain ``pytest`` nor run by CI. Run it by
+naming the file, with ``BRKRAW_SORDINO_GOLDEN_ZIP`` set to the phantom zip that holds
+the scans 11 (GoldenSampling), 13 (Default), 17 (GoldenGridSampling) and 18 (Default,
+matrix 60)::
+
+    BRKRAW_SORDINO_GOLDEN_ZIP=/path/to/phantom.zip pytest -v scripts/validate/check_golden_phantom.py
+
+Without the variable it stops with a message. No FID is read.
 
 * Order: ``ACQ_O1_list[i] = offR*GradR[i] + offP*GradP[i] + offS*GradS[i]``
   (``BaseLevelRelations.c``); a least-squares fit of a constant and the three
@@ -22,8 +28,8 @@ import numpy as np
 import pytest
 
 ZIP = os.environ.get("BRKRAW_SORDINO_GOLDEN_ZIP", "")
-pytestmark = pytest.mark.skipif(not (ZIP and os.path.isfile(ZIP)),
-                                reason="phantom dataset not available (BRKRAW_SORDINO_GOLDEN_ZIP)")
+if not (ZIP and os.path.isfile(ZIP)):
+    pytest.exit("set BRKRAW_SORDINO_GOLDEN_ZIP to the phantom dataset zip (see the docstring)", returncode=2)
 
 TOL = 1e-12
 

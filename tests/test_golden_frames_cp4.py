@@ -133,29 +133,43 @@ def test_golden_lists_ignore_the_default_trajectory_keys(mode):
 
 
 # ------------------------------------------------------------------ docs
-def _golden_section(path):
-    text = path.read_text()
-    m = re.search(r"^## Golden trajectories and frames\n(.*?)(?=^## )", text, re.S | re.M)
-    assert m, path
-    return m.group(1)
+#: WI-0122 moved the "Golden trajectories and frames" section of the README: the frame options and
+#: the frames example are in docs.md (the "Frames" paragraph under the reconstruction options and
+#: the Cautions), the directions and the Golden Grid head (ProUnderSampling) in the technical note.
+DOCS_MD = ROOT / "src/brkraw_sordino/docs.md"
+NOTE_MD = ROOT / "docs/technical-note.md"
 
 
-def test_docs_golden_section_is_the_same_in_readme_and_docs():
-    assert _golden_section(ROOT / "README.md") == _golden_section(ROOT / "src/brkraw_sordino/docs.md")
+def _frames_part(text):
+    """docs.md from the frames paragraph to the end of the Cautions (frame options, example, caution)."""
+    start = text.index("Frames (golden scans;")
+    return text[start:text.index("## Size estimate without reading data")]
+
+
+def test_docs_golden_frames_are_in_docs_md_and_not_repeated_in_the_readme():
+    readme = (ROOT / "README.md").read_text()
+    assert "## Golden trajectories and frames" not in readme
+    assert "frame_spokes" not in readme
+    part = _frames_part(DOCS_MD.read_text())
+    assert "TrajectoryMode" in part and "frame_spokes" in part
 
 
 def test_docs_golden_options_are_real_options(tmp_path):
     import yaml
 
-    sec = _golden_section(ROOT / "README.md")
-    names = set(re.findall(r"`(frame_[a-z_]+)`", sec))
+    text = DOCS_MD.read_text()
+    part = _frames_part(text)
+    names = set(re.findall(r"^\| `(frame_[a-z_]+)` \|", part, re.M))
     assert names == {"frame_spokes", "frame_step", "frame_accumulate"}
-    blocks = re.findall(r"```yaml\n(.*?)```", sec, re.S)
-    assert blocks
-    for b in blocks:
-        args = yaml.safe_load(b)["hooks"]["sordino"]
-        hook._build_options(dict(args, cache_dir=str(tmp_path)))
-    for line in re.findall(r"--hook-arg sordino:([a-z_]+)=", sec):
-        assert line in {"frame_spokes", "frame_step", "frame_accumulate", "estimate_k0"}
-    for word in ("ProUnderSampling", "49.8 GB", "pixdim"):
-        assert word in sec
+    # the YAML block at the top shows the frame options as comments; uncommented they must build
+    block = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
+    uncommented = re.sub(r"^(\s*)# (frame_[a-z_]+:)", r"\1\2", block, flags=re.M)
+    args = yaml.safe_load(uncommented)["hooks"]["sordino"]
+    assert {"frame_spokes", "frame_accumulate"} <= set(args)
+    hook._build_options(dict(args, cache_dir=str(tmp_path)))
+    cli = re.findall(r"--hook-arg sordino:([a-z_]+)=([^\s\\]+)", part)
+    assert {k for k, _ in cli} == {"frame_spokes", "frame_step"}
+    hook._build_options(dict({k: v for k, v in cli}, cache_dir=str(tmp_path)))
+    for word in ("49.8 GB", "pixdim"):
+        assert word in part
+    assert "ProUnderSampling" in NOTE_MD.read_text()
