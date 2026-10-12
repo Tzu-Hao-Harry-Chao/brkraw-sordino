@@ -69,7 +69,7 @@ K0_SAMPLE_FIXED_BYTES = 16 * MIB
 #: Toeplitz one (D-0143: "at most half"; measured shapes: 0.32-0.50 sample, 0.60-1.05 Toeplitz).
 K0_SAMPLES_MAX_FRACTION = 0.5
 #: Spoke-timing correction works on one FID segment of all selected frames at a time:
-#: measured 4.1 x the segment (real v1, 30 frames, one segment); 5.0 keeps a margin.
+#: measured 4.1 x the segment (real 0.1 data, 30 frames, one segment); 5.0 keeps a margin.
 SPOKETIMING_FACTOR = 5.0
 
 

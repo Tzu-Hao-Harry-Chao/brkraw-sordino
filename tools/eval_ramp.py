@@ -248,9 +248,9 @@ def trajectory(recon_info: Dict[str, Any], mode: str, cache_dir: Path):
 
 
 def detect_version(meta: Dict[str, Any]) -> Optional[str]:
-    """v1/v2/v3 from parameter keys unique to each sequence package.
+    """Internal v1/v2/v3 (shown as 0.1 / 0.2 / 0.3 or 1.x) from parameter keys unique to each package.
 
-    v3 (`sordino`): MaximizeRampTime or RFWait exist; v2
+    v3 (`sordino_260801`, `sordino`): MaximizeRampTime or RFWait exist; v2
     (`sordino_260122_trig`): TrigSegmentMode exists; v1 (`mjm_zte_231005`
     family): RampDelay exists without the others. None otherwise.
     (Source-review brief, WI-0056, parsDefinition.h comparison.)
@@ -343,8 +343,8 @@ def model_tau_us(meta: Dict[str, Any], version: str, n_samples: int,
     clip((s - t_ramp_start) / RampTime, 0, 1); curvature=0.5 is the gradient
     integral (other values scale the ramp term, for sensitivity checks only;
     the current code's own form is ``current_code_tau_us``).
-    Times from the source-review brief (WI-0056): v1 ramp starts at TR start +
-    10 us; v2/v3 at RF end. Returns [] if a needed value is missing.
+    Times from the source-review brief (WI-0056): v1 (0.1) ramp starts at TR start +
+    10 us; v2/v3 (0.2, 0.3 / 1.x) at RF end. Returns [] if a needed value is missing.
     """
     try:
         p0_us = float(np.asarray(meta["ExcPulLength_ms"])) * 1e3

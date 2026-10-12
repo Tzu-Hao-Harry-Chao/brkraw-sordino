@@ -104,7 +104,8 @@ def test_info_keys_are_documented():
     info_keys = ["shape", "dtype", "count", "nbytes", "frames", "frames_reconstructed", "cached",
                  "cache_path", "cache_dir", "cache_dtype", "cache_nbytes", "peak_nbytes", "recon_nbytes",
                  "recon_chunk_spokes", "recon_chunks", "recon_frames_open", "recon_dcf_nbytes", "recon_k0_method", "recon_k0_reason", "disk_nbytes",
-                 "disk_free_nbytes", "limit_nbytes", "limit_source", "frames_planned", "fid_short_nbytes"]
+                 "disk_free_nbytes", "limit_nbytes", "limit_source", "frames_planned", "fid_short_nbytes",
+                 "sequence_generation", "sequence_method"]
     table = DOCS.split("## Size estimate without reading data", 1)[1]
     for key in info_keys:
         assert f"`{key}`" in table, key

@@ -23,16 +23,25 @@ The receiver frequency of projection i (ACQ_O1_list[i]) matches g(i), so the
 FID also carries the phase 2*pi*(O1[i-1] - O1[i]) * integral of (1 - f).
 Only the ramp window (ramp_start, ramp_length) differs between versions:
 
-    version  sequence package          ramp starts                     source
-    v1       mjm_zte_231005            10 us after TR start, i.e.       mjm ppg:57,60,64,65
-                                       RampDelay + 10 us before RF start
-    v2       sordino_260122_trig       at the end of the RF pulse       260122 ppg:70-72
-    v3       sordino                   at the end of the RF pulse       sordino ppg:95,106
-    zte      general ZTE (no RampTime) before the RF; the gradient is   (model: ramp finished
-                                       constant during RF and sampling   before the first sample)
+    model  shown as  sequence package          ramp starts                     source
+    v1     0.1       mjm_zte_231005            10 us after TR start, i.e.       mjm ppg:57,60,64,65
+                                               RampDelay + 10 us before RF start
+    v2     0.2       sordino_260122_trig       at the end of the RF pulse       260122 ppg:70-72
+    v3     0.3       sordino_260801 (golden    at the end of the RF pulse       sordino ppg:95,106
+           or 1.x    sample extension) or
+                     sordino (1.x, stable release)
+    zte    zte       general ZTE (no RampTime) before the RF; the gradient is   (model: ramp finished
+                                               constant during RF and sampling   before the first sample)
 
-v2 and v3 are one model: how much of the ramp falls inside the acquisition
-follows from RampTime versus the acquisition time. v1 with a short RampTime
+"model" is the internal value (``"v1"`` ... ``"zte"``): it is part of the
+trajectory cache key, so it never changes. "shown as" is the sequence
+generation users see (``GENERATION_LABELS``, ``generation_label``): 0.x are
+development generations, 1.x is the stable ``sordino`` release. 0.3 and 1.x
+share one timing model (internal v3); they are told apart only for display,
+from the method name, and shown as "0.3 or 1.x" when it does not say.
+
+0.2 and 0.3/1.x are one model: how much of the ramp falls inside the acquisition
+follows from RampTime versus the acquisition time. 0.1 with a short RampTime
 reaches the target before the first sample; the same formula covers it.
 """
 
@@ -47,11 +56,24 @@ from .ramp import phase_delay, ramp_integral
 # Fixed pulse-program delays [read, constant in the sequence source]
 # ---------------------------------------------------------------------------
 
-#: v1: the transmit-frequency event between the ramp window and the RF pulse
+#: 0.1 (internal v1): the transmit-frequency event between the ramp window and the RF pulse
 #: (``10u fList:f1``, mjm_zte_231005.ppg:64). The ramp itself starts at the
 #: beginning of the ``rampDelay`` event (ppg:60), after the 10 us receive
 #: event (ppg:57). [read, us]
 V1_TX_EVENT_US = 10.0
+
+# ---------------------------------------------------------------------------
+# Sequence generation as users see it (WI-0125, D-0217). Display only: the
+# internal values "v1" | "v2" | "v3" | "zte" stay in SeqTiming, TIMING_TUNING
+# and the cache keys.
+# ---------------------------------------------------------------------------
+
+#: internal timing model -> generation label. v3 covers two generations.
+GENERATION_LABELS: Dict[str, str] = {"v1": "0.1", "v2": "0.2", "v3": "0.3 or 1.x", "zte": "zte"}
+
+#: method name -> label, for the internal v3 only: ``sordino_260801`` is the golden
+#: sample extension (0.3), ``sordino`` the stable release (1.x).
+V3_METHOD_LABELS: Dict[str, str] = {"sordino_260801": "0.3", "sordino": "1.x"}
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +85,9 @@ V1_TX_EVENT_US = 10.0
 class SeqTiming:
     """[read] Timing of one scan, from recon_info (method/acqp).
 
-    version:             "v1" | "v2" | "v3" | "zte" (detect_version).
+    version:             internal timing model "v1" | "v2" | "v3" | "zte"
+                         (detect_version); shown to users as 0.1 | 0.2 |
+                         0.3 or 1.x | zte (``generation_label``).
     rf_len_us:           excitation pulse length; method ``ExcPul`` (first
                          field, ms) x 1000. All versions.
     acq_delay_total_us:  RF centre to the first sample; method
@@ -72,13 +96,14 @@ class SeqTiming:
     dwell_us:            sample interval; 1e6 / (``PVM_EffSWh`` x
                          ``OverSampling``). All versions.
     ramp_time_us:        ramp length; method ``RampTime`` (ms) x 1000.
-                         v1 (user value, up to TR - 0.01 ms), v2 (AcqDelay +
-                         DE + Acq + 5 us, 260122 backbone.c:148-152), v3
-                         (TR - GradSettle when MaximizeRampTime, sordino
-                         backbone.c:406-425). None for zte.
-    ramp_delay_us:       v1: length of the ramp window before the RF
+                         v1 = 0.1 (user value, up to TR - 0.01 ms), v2 = 0.2
+                         (AcqDelay + DE + Acq + 5 us, 260122
+                         backbone.c:148-152), v3 = 0.3 / 1.x (TR - GradSettle
+                         when MaximizeRampTime, sordino backbone.c:406-425).
+                         None for zte.
+    ramp_delay_us:       v1 (0.1): length of the ramp window before the RF
                          (``RampDelay``, ms x 1000, mjm backbone.c:307).
-                         Also stored by v2 (a wait with no ramp); unused there.
+                         Also stored by v2 (0.2; a wait with no ramp); unused there.
     """
 
     version: str
@@ -102,18 +127,18 @@ class TimingTuning:
     ramp_len_offset_us:    added to RampTime.
     acq_start_offset_us:   added to every sample time (first-sample timing).
     phase_ref_us:          phase reference time relative to the RF centre
-                           (0 = RF centre, observed on v2 in WI-0056 run 3).
+                           (0 = RF centre, observed on 0.2 data in WI-0056 run 3).
 
     Why every entry is 0 (BRK-0061): the WI-0056 run-3 estimate (maximise
     the O1-step coherence of the first samples) put the phase about -2.5 us
-    (v1) and +2.4 us (v3) away from the model, but that estimator is biased
+    (0.1) and +2.4 us (1.x) away from the model, but that estimator is biased
     by the object's own spoke phase: on simulated data with no delay it gave
     +1.65, +2.70 and -3.52 us (WI-0058). The data-consistency estimate in
     ``tools/eval_timing_centre.py`` puts the phase delay within 0.5 us of the
-    model on the v1, v2 and v3 functional scans; the recheck with the fixed
+    model on the 0.1, 0.2 and 1.x functional scans; the recheck with the fixed
     near-centre NUFFT operator gave the same values (WI-0057). So there is no
     timing offset to correct. Change a value here only after a trajectory
-    measurement or a phantom scan (v3), checked with the evaluation tool.
+    measurement or a phantom scan (0.3 / 1.x), checked with the evaluation tool.
     """
 
     ramp_start_offset_us: float = 0.0
@@ -122,7 +147,8 @@ class TimingTuning:
     phase_ref_us: float = 0.0
 
 
-#: [tune] Edit here. One entry per version.
+#: [tune] Edit here. One entry per internal timing model ("v1" = 0.1, "v2" = 0.2,
+#: "v3" = 0.3 / 1.x); the keys are part of the cache keys and stay.
 TIMING_TUNING: Dict[str, TimingTuning] = {
     "v1": TimingTuning(),
     "v2": TimingTuning(),
@@ -137,11 +163,14 @@ TIMING_TUNING: Dict[str, TimingTuning] = {
 
 
 def detect_version(recon_info: Mapping[str, Any]) -> str:
-    """Sequence version from parameter keys unique to each package.
+    """Internal timing model from parameter keys unique to each package.
 
-    v3 (`sordino`): ``MaximizeRampTime`` or ``RFWait`` present.
-    v2 (`sordino_260122_trig`): ``TrigSegmentMode`` present.
-    v1 (`mjm_zte_231005` family): ``RampDelay`` and ``RampTime`` present.
+    The returned value is the cache-key value; users see ``generation_label``.
+
+    v3 (shown 0.3 / 1.x; `sordino_260801`, `sordino`): ``MaximizeRampTime`` or
+    ``RFWait`` present.
+    v2 (shown 0.2; `sordino_260122_trig`): ``TrigSegmentMode`` present.
+    v1 (shown 0.1; `mjm_zte_231005` family): ``RampDelay`` and ``RampTime`` present.
     zte (general ZTE): no ``RampTime``; the gradient is taken as constant
     during RF and sampling.
     (parsDefinition.h comparison, WI-0056 source-review brief.)
@@ -154,8 +183,23 @@ def detect_version(recon_info: Mapping[str, Any]) -> str:
         return "v1"
     if recon_info.get("RampTime_ms") is None:
         return "zte"
-    raise ValueError("SORDINO version not recognised from method parameters "
+    raise ValueError("SORDINO sequence generation not recognised from method parameters "
                      "(RampTime present without RampDelay/TrigSegmentMode/MaximizeRampTime)")
+
+
+def generation_label(version: str, method: Optional[str] = None) -> str:
+    """Sequence generation shown to users for an internal ``version`` (WI-0125, D-0217).
+
+    ``"v1"`` -> ``"0.1"``, ``"v2"`` -> ``"0.2"``, ``"zte"`` -> ``"zte"``. ``"v3"`` is
+    one timing model for two generations, told apart by the method name only:
+    ``sordino_260801`` -> ``"0.3"``, ``sordino`` -> ``"1.x"``; with another or no
+    method name the honest ``"0.3 or 1.x"``. (The phantom method headers carry no
+    version string, so the x of 1.x is not read.) Display only: the internal value
+    and the cache key do not change.
+    """
+    if version == "v3" and method:
+        return V3_METHOD_LABELS.get(str(method).strip(), GENERATION_LABELS["v3"])
+    return GENERATION_LABELS.get(version, str(version))
 
 
 def read_timing(recon_info: Mapping[str, Any]) -> SeqTiming:
@@ -205,7 +249,7 @@ def ramp_window(t: SeqTiming, tune: TimingTuning) -> Optional[tuple]:
         raise ValueError("ramp length must be > 0 (RampTime + ramp_len_offset_us)")
     if t.version == "v1":
         start = -(V1_TX_EVENT_US + float(t.ramp_delay_us) + t.rf_len_us / 2.0)
-    else:  # v2, v3: ramp starts at the end of the RF pulse
+    else:  # v2, v3 (0.2, 0.3 / 1.x): ramp starts at the end of the RF pulse
         start = t.rf_len_us / 2.0
     return start + tune.ramp_start_offset_us, length
 
@@ -281,6 +325,7 @@ def describe(t: SeqTiming, tune: TimingTuning) -> Dict[str, Any]:
 
 __all__ = [
     "SeqTiming", "TimingTuning", "TIMING_TUNING", "V1_TX_EVENT_US",
+    "GENERATION_LABELS", "V3_METHOD_LABELS", "generation_label",
     "detect_version", "read_timing", "tuning_for", "ramp_window",
     "sample_times_us", "ramp_terms", "dead_time_kgrid", "kspace_gap", "describe",
 ]

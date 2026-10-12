@@ -5,7 +5,7 @@ The cache is a headerless file of complex values: frame ``n`` is one block of
 inside the block (``recon.recon_dataobj`` writes it). Reading one frame at a
 time into one reusable buffer keeps the memory near one result, where reading
 the whole file and then taking the magnitude needed about three results
-(WI-0071 M1: 3.01-3.11 x on real v1 data).
+(WI-0071 M1: 3.01-3.11 x on real 0.1 data).
 """
 from pathlib import Path
 from typing import Optional, Sequence, Union

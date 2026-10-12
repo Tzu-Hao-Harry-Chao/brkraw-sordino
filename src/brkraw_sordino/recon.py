@@ -410,7 +410,7 @@ def phase_correction_factor(recon_info: Dict[str, Any], options: Options,
     (n_pro, n_points), or None when no correction applies: correct_ramptime
     off, no FOV offset (O1 list of length 1), or a constant gradient (general
     ZTE). The phase correction is part of ``correct_ramptime`` (BRK-0066).
-    The sign follows the phase observed on v2 data (WI-0056 run 3). The
+    The sign follows the phase observed on 0.2 data (WI-0056 run 3). The
     reconstruction uses ``phase_correction_rows`` (the same values per range).
     """
     rows = phase_correction_rows(recon_info, options, n_points)

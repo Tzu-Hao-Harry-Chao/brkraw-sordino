@@ -46,7 +46,7 @@ hooks:
 | `offset` | `0` | First repetition to reconstruct. |
 | `num_frames` | `null` | Repetitions to reconstruct from `offset` (`null`: all). |
 | `correct_ramptime` | `true` | Ramp-time correction: places each sample on the ramping gradient and removes the phase the FOV-offset frequency (`ACQ_O1_list`) leaves while it ramps. Off: every spoke keeps one fixed gradient vector, no phase correction. Timing values live in `timing.py`. |
-| `estimate_k0` | `true` | Fills the k-space centre that the dead time leaves unmeasured (SORDINO v1-v3): the dark centre of the adjoint image is filled. Changes the image and costs time and memory (see Cautions). `false` gives the plain adjoint. |
+| `estimate_k0` | `true` | Fills the k-space centre that the dead time leaves unmeasured (SORDINO 0.1 to 1.x): the dark centre of the adjoint image is filled. Changes the image and costs time and memory (see Cautions). `false` gives the plain adjoint. |
 | `correct_spoketiming` | `false` | Aligns every spoke to the centre of its repetition's scan time (needs several repetitions; not with frames). |
 | `offreso_freqs` | `null` | Off-resonance in Hz, one per receive channel: a number, a list or `"120,-80"`; all forms read the same, a non-finite value is refused. |
 | `golden_weights` | `capped` | Density weights of golden scans (case-insensitive): `capped` Pipe-Menon weights capped at the \|k\|^2 weight; `pipe` the same without the cap (less streaking, more noise in thinly covered k-space); `k2` the \|k\|^2 weights of uniform straight spokes (no estimate, no extra memory or time; streaks). Each choice has its own cache; `capped` keeps the caches made before the option existed. A Default scan always uses `k2` (a warning when the option is not `capped`). |
@@ -127,7 +127,8 @@ brkraw convert /path/to/study -s 11 -r 1 \
   the unmeasured centre, first acquired and first kept sample), `k0` (`[real, imag]` per channel and
   frame; with frames one estimate for all), `short_fid` (`fid_nbytes`, `expected_nbytes`,
   `frame_nbytes`, `frames_planned`, `frames_complete`; null for a complete FID; a short FID has its
-  own cache), `frames`, `density_weights`. A Golden Grid head, if applied, logs a warning; no option.
+  own cache), `frames`, `density_weights`, `sequence_generation`. A Golden Grid head, if applied, logs a warning; no option.
+- **Sequence generations.** 0.1 (`mjm_zte_231005`), 0.2 (`sordino_260122_trig`), 0.3 (`sordino_260801`, golden sample extension) and 1.x (`sordino`, the stable release) are development generations and the release; zte is a general ZTE. 0.3 and 1.x share one ramp model, so the result does not depend on which a scan is: they are told apart by the method name only, and a scan whose method name says neither is shown as `0.3 or 1.x`. The x of 1.x is not read (the method header has no version string). Details: `docs/technical-note.md` section 4.
 
 ## For developers: tests and manual checks
 
@@ -155,3 +156,4 @@ and returns a dict:
 | `disk_nbytes`, `disk_free_nbytes` | disk a new cache needs (0 when cached), free space (null when cached or unreadable) |
 | `limit_nbytes`, `limit_source` | the limit `get_dataobj` applies; `max_memory_gb option`, `half of physical memory` or `fallback 4 GB` |
 | `frames_planned`, `fid_short_nbytes` | frames in `PVM_NRepetitions`; bytes the FID is short (0 complete, null unknown); with a short FID `frames_reconstructed` is the complete frames |
+| `sequence_generation`, `sequence_method` | the sequence generation: `"0.1"`, `"0.2"`, `"0.3"`, `"1.x"`, `"0.3 or 1.x"` (method name does not tell), `"zte"` (null when not recognised); the scan's method name (null when missing). The same label is kept as `sequence_generation` in the recon cache `.json` |

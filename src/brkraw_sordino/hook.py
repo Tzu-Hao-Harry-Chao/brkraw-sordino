@@ -195,7 +195,7 @@ class K0TimingError(ValueError):
 
 
 def _resolve_k0(options: Options, recon_info: Dict[str, Any]) -> Options:
-    """``estimate_k0`` applies to SORDINO v1-v3 only (BRK-0066).
+    """``estimate_k0`` applies to SORDINO 0.1 to 1.x only (BRK-0066).
 
     A general ZTE keeps the plain adjoint: the option is switched off in the
     options (so the cache key equals the plain run) and an info line says so.
@@ -209,7 +209,7 @@ def _resolve_k0(options: Options, recon_info: Dict[str, Any]) -> Options:
     except (KeyError, TypeError, ValueError) as exc:
         raise K0TimingError(f"estimate_k0 needs the sequence timing parameters: {exc}") from exc
     if version == "zte":
-        logger.info("estimate_k0 applies to SORDINO v1-v3 only; general ZTE data are reconstructed "
+        logger.info("estimate_k0 applies to SORDINO 0.1 to 1.x only; general ZTE data are reconstructed "
                     "without it.")
         options.estimate_k0 = False
     return options
@@ -270,6 +270,29 @@ def _golden_grid_head(scan: Any, recon_info: Dict[str, Any]) -> Optional[Dict[st
             else:
                 logger.debug("Golden Grid head: traj lines are not straight spokes (misfit %.3g)", fit)
     return golden.grid_head(recon_info, method=name, golden_samp_traj=gst_yes, traj_dirs=traj_dirs)
+
+
+def _sequence_generation(scan: Any, recon_info: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """``(sequence_generation, sequence_method)`` for the info dict (WI-0125, D-0217).
+
+    The generation is what users see (0.1, 0.2, 0.3, 1.x, ``"0.3 or 1.x"`` when the
+    method name does not say, ``zte``; ``timing.generation_label``), None when the
+    timing model is not recognised. The method name is the scan's ``Method`` without
+    ``<User:...>``, None when missing. Display only: the cache key keeps the internal
+    ``"v1"`` ... ``"zte"``.
+    """
+    from . import timing as timing_mod
+
+    get = getattr(getattr(scan, "method", None), "get", None)
+    try:
+        name = golden.method_name(get("Method")) if get else None
+    except Exception:  # noqa: BLE001  (an odd method object: no name)
+        name = None
+    try:
+        version = timing_mod.detect_version(recon_info)
+    except (KeyError, TypeError, ValueError):
+        return None, name
+    return timing_mod.generation_label(version, name), name
 
 
 def _recon_metadata(recon_info: Dict[str, Any], options: Options) -> Dict[str, Any]:
@@ -759,6 +782,7 @@ def _plan(scan: Any, reco_id: Optional[int], kwargs: Dict[str, Any]) -> Dict[str
                         stc_cache_path=build_spoketiming_cache_path(options.cache_dir, cache_params),
                         frame_plan=frame_plan)
     info["frames_planned"] = frames_planned
+    info["sequence_generation"], info["sequence_method"] = _sequence_generation(scan, recon_info)
     if short_fid is not None:
         info["fid_short_nbytes"] = short_fid["expected_nbytes"] - short_fid["fid_nbytes"]
     else:
@@ -785,8 +809,11 @@ def get_dataobj_info(scan: Any, reco_id: Optional[int] = None, **kwargs: Any) ->
     without a cache, ``recon_nbytes`` for the reconstruction step,
     ``memguard.recon_nbytes``), ``limit_nbytes`` and ``limit_source``
     (the memory limit that ``get_dataobj`` applies), ``disk_nbytes`` and
-    ``disk_free_nbytes``. Before a cache exists the cache dtype is assumed to
-    be complex128.
+    ``disk_free_nbytes``, ``sequence_generation`` (the sequence generation as
+    users see it: ``"0.1"``, ``"0.2"``, ``"0.3"``, ``"1.x"``, ``"0.3 or 1.x"`` when
+    the method name does not tell the two apart, ``"zte"``; None if not
+    recognised) and ``sequence_method`` (the scan's method name or None).
+    Before a cache exists the cache dtype is assumed to be complex128.
     """
     return _plan(scan, reco_id, kwargs)["info"]
 
@@ -819,6 +846,7 @@ def get_dataobj(
     except Exception:
         setattr(scan, "_sordino_spatial_shape", None)
     recon_meta = _recon_metadata(recon_info, options)
+    recon_meta["sequence_generation"] = info.get("sequence_generation")   # shown label (WI-0125)
     # density weights used (WI-0113 run 6): the golden_weights choice for golden scans, k2 otherwise
     recon_meta["density_weights"] = options.golden_weights if dcf.is_golden(recon_info) else "k2"
     # a short FID (WI-0109): the planned and complete frames, with the result

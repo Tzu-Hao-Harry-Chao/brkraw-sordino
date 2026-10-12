@@ -140,15 +140,20 @@ u=\frac{1}{2(N_s-1)},\quad \tilde t_j=\frac{t_j}{\Delta t},\quad
 $\mathbf g_{-1}$ is the last vector of the list (the dummy spokes and the previous repetition end
 on it); every spoke, the last one included, has the ramp. The integral has the closed form
 $h(t)-h(0)$ with $h(x)=0$ for $x\le t_r$, $(x-t_r)^2/(2L)$ for $t_r<x<t_r+L$ and
-$L/2+x-t_r-L$ after. The ramp window $(t_r,L)$ (from the RF centre) depends on the sequence version,
-detected from method keys:
+$L/2+x-t_r-L$ after. The ramp window $(t_r,L)$ (from the RF centre) depends on the sequence generation,
+detected from method keys (0.x are development generations, 1.x is the stable `sordino` release):
 
-| Version | Sequence | Detected by | Ramp start $t_r$ | Length $L$ |
+| Generation | Sequence | Detected by | Ramp start $t_r$ | Length $L$ |
 | --- | --- | --- | --- | --- |
-| v1 | `mjm_zte` | `RampDelay` and `RampTime` | $-(10\,\mu\mathrm s+\text{RampDelay}+T_{\mathrm{RF}}/2)$ | `RampTime` |
-| v2 | `sordino_260122_trig` | `TrigSegmentMode` | $T_{\mathrm{RF}}/2$ | `RampTime` |
-| v3 | `sordino` | `MaximizeRampTime` or `RFWait` | $T_{\mathrm{RF}}/2$ | `RampTime` |
+| 0.1 | `mjm_zte_231005` | `RampDelay` and `RampTime` | $-(10\,\mu\mathrm s+\text{RampDelay}+T_{\mathrm{RF}}/2)$ | `RampTime` |
+| 0.2 | `sordino_260122_trig` | `TrigSegmentMode` | $T_{\mathrm{RF}}/2$ | `RampTime` |
+| 0.3 | `sordino_260801` (golden sample extension) | `MaximizeRampTime` or `RFWait`, method name | $T_{\mathrm{RF}}/2$ | `RampTime` |
+| 1.x | `sordino` (stable release) | `MaximizeRampTime` or `RFWait`, method name | $T_{\mathrm{RF}}/2$ | `RampTime` |
 | zte | general ZTE | no `RampTime` | none: constant gradient | none |
+
+0.3 and 1.x share one timing model; they differ only in the name shown, taken from the method name (a
+scan whose method name is neither is shown as "0.3 or 1.x"). Internally the models are `v1`, `v2`, `v3`
+and `zte`; these values are part of the trajectory cache key and do not change.
 
 $T_{\mathrm{RF}}$ is the excitation pulse length (`ExcPul`). For the general ZTE the gradient is
 constant during RF and sampling, $\tilde F_j=\tilde t_j$ and $\mathbf k_{ij}=u\,\tilde t_j\,\mathbf g_i$. Timing values
@@ -173,7 +178,7 @@ $$y'_{ij}=y_{ij}\,\exp\!\big[-2\pi\mathrm i\,(O_{i-1}-O_i)\,\tau_j\big],\qquad
 
 with $\tau_j$ in seconds and the phase reference at the RF centre. It applies when `ACQ_O1_list`
 has one value per spoke and the gradient ramps (not for a single value, nor for the general
-ZTE). The sign follows the phase observed on v2 data.
+ZTE). The sign follows the phase observed on 0.2 data.
 
 For the Golden Grid head (section 3.4) the true frequency is $O^{\mathrm{true}}_i=o_0+\mathbf o\cdot\mathbf g^{\mathrm{Default}}_i$
 on the head ($o_0,\mathbf o$ fitted to the golden list and the recorded values) and the recorded value
@@ -333,7 +338,7 @@ The dead time leaves the centre unmeasured. The first acquired sample lies at th
 $\kappa_0=T_0/(\Delta t\,\sigma)$ k-grid units ($1/\mathrm{FOV}$; one unit is $\sigma$ samples along a spoke), the
 first kept sample at $(T_0+n_{\mathrm{ign}}\Delta t)/(\Delta t\,\sigma)$. Without `estimate_k0` this centre is left empty. Both radii are logged (info for a general ZTE gap over
 one unit, debug otherwise) and kept as `scan._sordino_recon_meta["kspace_gap"]` and in the recon cache
-`.json`. The estimate applies to SORDINO v1-v3 only; on a general ZTE, or without the sequence timing
+`.json`. The estimate applies to SORDINO 0.1 to 1.x only; on a general ZTE, or without the sequence timing
 values, it is switched off with an info message.
 
 **Estimate.** With $A$ the type-2 NUFFT onto the measured sample positions,

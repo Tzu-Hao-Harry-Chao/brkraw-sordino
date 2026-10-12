@@ -17,7 +17,7 @@ class Options:
     split_ch: bool
     cache_dir: Path
     as_complex: bool
-    # BRK-0066: algebraic estimate of the k-space centre (kcentre.py), SORDINO v1-v3 only.
+    # BRK-0066: algebraic estimate of the k-space centre (kcentre.py), SORDINO 0.1 to 1.x only.
     # The hook's default is on since WI-0113 run 6 (D-0200 2; hook._build_options); an Options
     # built directly keeps False so that internal callers state it.
     estimate_k0: bool = False

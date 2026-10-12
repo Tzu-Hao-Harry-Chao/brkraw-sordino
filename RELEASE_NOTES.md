@@ -5,6 +5,13 @@ minimal use). `brkraw hook docs sordino` (`src/brkraw_sordino/docs.md`) shows th
 The algorithms, with their equations, are in `docs/technical-note.md`. `tests/test_docs.py` keeps the option tables in
 step with the code.
 
+Sequence generations (WI-0125, no change to results or cache keys): the sequences are now named 0.1 (`mjm_zte_231005`),
+0.2 (`sordino_260122_trig`), 0.3 (`sordino_260801`, golden sample extension) and 1.x (`sordino`, the stable release);
+zte stays. The earlier "v1/v2/v3" wording is gone from the docs and log messages. 0.3 and 1.x share one ramp model and
+are told apart by the method name only (`"0.3 or 1.x"` when it says neither). `get_dataobj_info` has two new items,
+`sequence_generation` and `sequence_method`, and the recon cache `.json` keeps `sequence_generation`; no existing item
+changed. Internally the model values `v1`/`v2`/`v3`/`zte` stay, so trajectory caches are not rebuilt.
+
 Behaviour changes for every scan:
 
 - Image grid (WI-0119): images are now placed where the scan's affine says
@@ -15,7 +22,7 @@ Behaviour changes for every scan:
   written before this change are not read (reconstructed once).
 
 - `estimate_k0` is now on by default. The dead-time centre of k-space is
-  estimated and filled for SORDINO v1-v3 data; general ZTE data and scans
+  estimated and filled for SORDINO 0.1 to 1.x data; general ZTE data and scans
   without the sequence timing values are reconstructed without it (info line).
   With `correct_ramptime: false` and no explicit `estimate_k0` it is off (info
   line); `estimate_k0: true` with `correct_ramptime: false` is still an error.

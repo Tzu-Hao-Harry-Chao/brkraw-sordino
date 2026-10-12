@@ -5,8 +5,8 @@ stage matrix (``eval_stages``), no product (``src/``) change:
 
 S4p / S4 — self-calibrated first-sample timing
     The run-3 phase-timing observation (WI-0056) found the O1-step phase of
-    the first samples offset from the BRK-0056 model by about -2.5 us (v1) and
-    +2.4 us (v3). A sample-time shift delta enters the same model as
+    the first samples offset from the BRK-0056 model by about -2.5 us (0.1) and
+    +2.4 us (1.x). A sample-time shift delta enters the same model as
 
         t_j = AcqDelayTotal + delta + j * dwell            (timing.py tuning
                                                              acq_start_offset_us)
