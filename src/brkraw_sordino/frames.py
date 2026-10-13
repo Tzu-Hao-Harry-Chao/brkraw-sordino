@@ -291,7 +291,7 @@ class _Stream:
 
 def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, plan: FramePlan, *,
                  phase_factor=None, virtual_traj=None, k0_out=None, chunk_spokes=None, k0_method=None,
-                 weights=None, spoke_mask=None):
+                 weights=None, spoke_mask=None, out_scale=1.0):
     """Write the frames of ``plan`` to ``img_fobj`` (the layout of ``recon_dataobj``); return their dtype.
 
     ``traj`` (``TrajectoryRows`` or an array), ``phase_factor`` (``PhaseRows`` or an array) and
@@ -304,6 +304,8 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
     (``n_rep * NPro``), True = use the spoke. Excluded spokes add nothing (their data are
     zeroed before the adjoint); frame scales are unchanged. Not with ``virtual_traj``
     (the K0 solve would still hold the excluded spokes): WI-0118 decides that case.
+
+    ``out_scale`` and a ``traj`` with ``n_keep`` (``recon_matrix``, WI-0132): as in ``recon_dataobj``.
     """
     from . import memguard, serial
     from .recon import (_row_source, correct_offreso, grid_shift, grid_shift_factor, parse_fid_info,
@@ -333,6 +335,8 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
     traj_spokes = int(traj.n_pro) if hasattr(traj, "n_pro") else int(np.shape(traj)[0])
     if traj_spokes != npro:
         raise ValueError(f"trajectory has {traj_spokes} spokes, the FID has {npro}")
+    n_stop = getattr(traj, "n_keep", None)          # recon_matrix (WI-0132)
+    n_used = n_points if n_stop is None else int(n_stop)
     if chunk_spokes is None:
         chunk_spokes = memguard.recon_plan(npro, n_points, n_rx, vol,
                                            estimate_k0=virtual_traj is not None)["chunk_spokes"]
@@ -353,7 +357,7 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
         if method == "toeplitz":
             kernel = serial.ToeplitzKernel(vol)
         elif method == "samples":
-            kernel = serial.SampleNormal(vol, npro * (n_points - ign))
+            kernel = serial.SampleNormal(vol, npro * (n_used - ign))
         else:
             raise ValueError(f"k0_method must be None, 'toeplitz' or 'samples', not {k0_method!r}")
     dmax = 0.0
@@ -394,7 +398,7 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
                 k = stream.read(r * npro + a, b - a)
                 if phase_factor is not None:
                     k = k * phase_factor[a:b][:, None, :]
-                k = k[..., ign:]
+                k = k[..., ign:n_stop]
                 if spoke_mask is not None:
                     k[~spoke_mask[r * npro + a:r * npro + b]] = 0.0
                 for ch in range(n_rx):
@@ -455,6 +459,8 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
         while nxt < plan.n_frames and plan.ranges[nxt][1] == b:
             lo = plan.ranges[nxt][0]
             img = (run - snaps[lo]) * (plan.scales[nxt] / nf)
+            if out_scale != 1.0:
+                img *= out_scale
             out = img if n_rx > 1 else img[0]
             img_fobj.write(np.ascontiguousarray(out.T).tobytes())
             del img, out

@@ -203,7 +203,9 @@ def parse_volume_shape(recon_info: Dict[str, Any],
     Returns:
         NDArray[np.int_]: Volume shape array after applying extension factors.
     """
-    matrix = recon_info.get("Matrix")
+    matrix = getattr(options, "recon_matrix", None)     # WI-0132: a smaller grid at the same FOV
+    if matrix is None:
+        matrix = recon_info.get("Matrix")
     if matrix is None:
         matrix = [int(recon_info.get("NPoints") or 0)] * 3
         logger.warning(" - Matrix size missing; defaulting to %s.", matrix)
@@ -440,7 +442,8 @@ def recon_dataobj(fid_fobj,
                   k0_out=None,
                   chunk_spokes=None,
                   k0_method=None,
-                  weights=None):
+                  weights=None,
+                  out_scale=1.0):
     """Reconstruct image volumes from FID data and write to an output file.
 
     Each frame is reconstructed in contiguous spoke chunks (WI-0097, D-0133):
@@ -480,6 +483,10 @@ def recon_dataobj(fid_fobj,
             samples (and of the virtual samples with ``virtual_traj``) instead of
             |k|^2 / max; the hook passes ``dcf.pipe_weights`` for golden trajectories
             (WI-0113 run 5, D-0197 decision 2). Also the K0 solve uses them.
+        out_scale (float): factor on every written volume (``recon_matrix``,
+            ``lowres.output_scale``; 1 leaves the volumes untouched). A ``traj``
+            with ``n_keep`` (``lowres.CutRows``) also cuts every spoke's samples
+            after ``n_keep`` (WI-0132).
 
     Returns:
         np.dtype: Dtype of the reconstructed output volumes.
@@ -514,12 +521,15 @@ def recon_dataobj(fid_fobj,
     traj_spokes = int(traj.n_pro) if hasattr(traj, "n_pro") else int(np.shape(traj)[0])
     if traj_spokes != n_pro:
         raise ValueError(f"trajectory has {traj_spokes} spokes, the FID has {n_pro}")
+    # recon_matrix (WI-0132): the samples after n_keep lie outside the small grid's band
+    n_stop = getattr(traj, "n_keep", None)
+    n_used = n_points if n_stop is None else int(n_stop)
     if chunk_spokes is None:
         chunk_spokes = memguard.recon_plan(n_pro, n_points, n_receivers, volume_shape,
                                            estimate_k0=virtual_traj is not None)["chunk_spokes"]
     ranges = serial.spoke_ranges(n_pro, chunk_spokes)
     logger.debug(" - Reconstruction: %s spokes x %s samples in %s chunk(s) of up to %s spokes",
-                 n_pro, n_points - ignore_samples, len(ranges), ranges[0][1] - ranges[0][0])
+                 n_pro, n_used - ignore_samples, len(ranges), ranges[0][1] - ranges[0][0])
 
     offreso_freqs = getattr(options, "offreso_freqs", None)
     eff_bandwidth = recon_info.get("EffBandwidth_Hz")
@@ -548,7 +558,7 @@ def recon_dataobj(fid_fobj,
         if method == "toeplitz":
             kernel = serial.ToeplitzKernel(volume_shape)
         elif method == "samples":
-            kernel = serial.SampleNormal(volume_shape, n_pro * (n_points - ignore_samples))
+            kernel = serial.SampleNormal(volume_shape, n_pro * (n_used - ignore_samples))
         else:
             raise ValueError(f"k0_method must be None, 'toeplitz' or 'samples', not {k0_method!r}")
         logger.info("estimate_k0: %s solve%s (reconstruction estimate: samples %.2f GiB, "
@@ -605,7 +615,7 @@ def recon_dataobj(fid_fobj,
                             (2, n_points, n_receivers, hi - lo))
             if phase_factor is not None:
                 k = k * phase_factor[lo:hi][:, None, :]
-            k = k[..., ignore_samples:]
+            k = k[..., ignore_samples:n_stop]
             for ch in range(n_receivers):
                 freq = _offreso(ch)
                 if freq is not None:
@@ -644,6 +654,8 @@ def recon_dataobj(fid_fobj,
                 vadj.add(acc[ch], preds[ch] * w_virtual)
             del vadj, preds
         acc /= nf
+        if out_scale != 1.0:
+            acc *= out_scale
         rss_gb = _get_current_rss_gb()
         if rss_gb is not None:
             logger.debug(" - Frame %s reconstructed (RSS %.2f GB)", n, rss_gb)

@@ -21,7 +21,7 @@ from numpy.typing import NDArray
 from .typing import Options
 from .boolopt import parse_bool
 from . import frames as frames_mod
-from . import dcf, golden, kcentre
+from . import dcf, golden, kcentre, lowres
 from .traj import get_trajectory, trajectory_rows  # noqa: F401  (get_trajectory: tests patch it)
 from .recon import (
     GRID_RULE,
@@ -142,6 +142,7 @@ def _build_options(kwargs: Dict[str, Any]) -> Options:
         "as_complex",
         "estimate_k0",
         "golden_weights",
+        "recon_matrix",
     } | set(READ_KEYS) | set(frames_mod.FRAME_KEYS)
     unknown_keys = sorted(set(kwargs.keys()) - known_keys)
     if unknown_keys:
@@ -187,6 +188,7 @@ def _build_options(kwargs: Dict[str, Any]) -> Options:
         frame_step=frames_mod.parse_frame_step(kwargs.get("frame_step")),
         frame_accumulate=parse_bool("frame_accumulate", kwargs.get("frame_accumulate", False)),
         golden_weights=golden_weights,
+        recon_matrix=lowres.parse(kwargs.get("recon_matrix")),
     )
 
 
@@ -346,7 +348,8 @@ def _build_cache_params(
     # the frame options enter through the resolved frame plan (WI-0113 CP3), so a key
     # without frames (one repetition per frame) is the key from before CP3
     keyed = {k: v for k, v in asdict(options).items()
-             if k not in RECON_KEY_EXCLUDED and k not in frames_mod.FRAME_KEYS and k != "golden_weights"}
+             if k not in RECON_KEY_EXCLUDED and k not in frames_mod.FRAME_KEYS
+             and k not in ("golden_weights", "recon_matrix")}
     params = {
         "scan_id": getattr(scan, "scan_id", None),
         "reco_id": reco_id,
@@ -364,6 +367,9 @@ def _build_cache_params(
         # golden trajectories: the density-weight rule of the golden_weights choice (WI-0113 runs 5
         # and 6; the default "capped" is the run-5 key); Default keys unchanged
         params["density"] = dcf.rule(getattr(options, "golden_weights", dcf.DEFAULT))
+    if getattr(options, "recon_matrix", None) is not None:
+        # a smaller grid at the same FOV (WI-0132): keyed only when set, so other keys are unchanged
+        params["recon_matrix"] = {"matrix": [int(v) for v in options.recon_matrix], "rule": lowres.RULE}
     return params
 
 
@@ -704,7 +710,8 @@ def _grid_shift(scan: Any, reco_id: Optional[int], recon_info: Dict[str, Any]) -
     are world-side and do not change the result), ``c`` the FOV centre ParaVision records
     (``recon.paravision_fov_centre``). None (grid left at the NUFFT centre ``N // 2``) when
     the scan has no reco parameters, several slice packs, or values the centre cannot be
-    read from.
+    read from. ``recon_matrix`` (WI-0132) keeps the same shift in the small grid's voxels
+    (``lowres.reduced_affine``).
     """
     try:
         from brkraw.apps.loader.helper import resolve_reco_id
@@ -733,6 +740,11 @@ def _plan(scan: Any, reco_id: Optional[int], kwargs: Dict[str, Any]) -> Dict[str
     """Options, cache paths, cache state, frame selection and the size estimate."""
     options = _build_options(kwargs)
     recon_info = _parse_recon_info(scan)
+    # recon_matrix (WI-0132): checked against the acquisition matrix; equal to it is the usual path
+    reduction = lowres.resolve(options.recon_matrix, recon_matrix(recon_info))
+    if reduction is None:
+        options.recon_matrix = None
+    # recon_matrix keeps this shift in the small grid's voxels (lowres.reduced_affine, get_affine)
     shift = _grid_shift(scan, reco_id, recon_info)
     if shift is not None:
         recon_info["GridShift"] = list(shift)       # read by recon_dataobj / recon_frames, keyed
@@ -794,7 +806,7 @@ def _plan(scan: Any, reco_id: Optional[int], kwargs: Dict[str, Any]) -> Dict[str
         "cached_dtype": cached_dtype if cached else None,
         "cached_shape": cached_shape if cached else None,
         "frame_list": frame_list, "keep_axis": keep_axis, "info": info,
-        "frame_plan": frame_plan,
+        "frame_plan": frame_plan, "reduction": reduction,
     }
 
 
@@ -851,6 +863,10 @@ def get_dataobj(
     recon_meta["density_weights"] = options.golden_weights if dcf.is_golden(recon_info) else "k2"
     # a short FID (WI-0109): the planned and complete frames, with the result
     recon_meta["short_fid"] = plan["short_fid"]
+    # recon_matrix (WI-0132): the small matrix; the cut details are added when it is reconstructed
+    red = plan["reduction"]
+    recon_meta["recon_matrix"] = None if red is None else {
+        "matrix": list(red.matrix), "acquisition_matrix": list(red.base), "ratio": red.ratio, "rule": lowres.RULE}
     frame_plan = plan["frame_plan"]
     recon_meta["frames"] = None if frame_plan is None else frame_plan.describe()
     if frame_plan is not None and options.estimate_k0:
@@ -866,6 +882,8 @@ def get_dataobj(
     cached_shape: Optional[list[int]] = plan["cached_shape"]
     if cached_dtype is not None and options.estimate_k0 and plan["img_meta"]:
         recon_meta["k0"] = plan["img_meta"].get("k0")
+    if cached_dtype is not None and red is not None and plan["img_meta"] and plan["img_meta"].get("recon_matrix"):
+        recon_meta["recon_matrix"] = plan["img_meta"]["recon_matrix"]     # with the cut details (WI-0132)
 
     if cached_dtype is None or cached_shape is None:
         with fid_entry.open() as fid_fobj:
@@ -884,6 +902,20 @@ def get_dataobj(
                 if info.get("recon_k0_reason") == "limit":
                     logger.info("estimate_k0: the Toeplitz solve does not fit the memory limit; "
                                 "using the sample-based solve, which fits (slower).")
+            out_scale = 1.0
+            reduction = plan["reduction"]
+            if reduction is not None:
+                # recon_matrix (WI-0132): spokes cut at the small grid's Nyquist radius, points in its units
+                cut = lowres.find_cut(traj, int(recon_info["NPro"]), reduction, options.ignore_samples or 1,
+                                      chunk_spokes or 4096, virtual_traj=virtual_traj)
+                traj = lowres.CutRows(traj, cut.n_keep, reduction.scale)
+                if virtual_traj is not None:
+                    virtual_traj = virtual_traj * reduction.scale
+                out_scale = lowres.output_scale(reduction, cut)
+                recon_meta["recon_matrix"] = {
+                    "matrix": list(reduction.matrix), "acquisition_matrix": list(reduction.base),
+                    "ratio": reduction.ratio, "samples_kept": cut.n_keep, "samples_per_spoke": cut.n_samples,
+                    "kspace_radius_kept": cut.radius_kept, "output_scale": out_scale, "rule": lowres.RULE}
             weights = None
             if dcf.uses_sample_weights(recon_info, options.golden_weights):
                 # golden trajectories: Pipe-Menon weights of the actual samples (WI-0113 run 5, D-0197 2),
@@ -959,13 +991,14 @@ def get_dataobj(
                             chunk_spokes=chunk_spokes,
                             k0_method=info.get("recon_k0_method"),
                             weights=weights,
+                            out_scale=out_scale,
                         )
                 elif frame_plan is not None:
                     dtype = frames_mod.recon_frames(
                         fid_fobj, traj, recon_info, img_fobj, options, frame_plan,
                         phase_factor=phase_factor, virtual_traj=virtual_traj, k0_out=k0_frames,
                         chunk_spokes=chunk_spokes, k0_method=info.get("recon_k0_method"),
-                        weights=weights)
+                        weights=weights, out_scale=out_scale)
                 else:
                     logger.debug("Spoketiming correction disabled.")
                     dtype = recon_dataobj(fid_fobj, traj, recon_info, img_fobj, options,
@@ -973,7 +1006,7 @@ def get_dataobj(
                                           virtual_traj=virtual_traj, k0_out=k0_frames,
                                           chunk_spokes=chunk_spokes,
                                           k0_method=info.get("recon_k0_method"),
-                                          weights=weights)
+                                          weights=weights, out_scale=out_scale)
             os.replace(img_temp_path, img_cache_path)
         if options.estimate_k0:
             recon_meta["k0"] = [[[float(k.real), float(k.imag)] for k in frame] for frame in k0_frames]
@@ -988,6 +1021,7 @@ def get_dataobj(
                 "kspace_gap": recon_meta["kspace_gap"],
                 "k0": recon_meta["k0"],
                 "short_fid": recon_meta["short_fid"],
+                **({"recon_matrix": recon_meta["recon_matrix"]} if recon_meta.get("recon_matrix") else {}),
             },
         )
     else:
@@ -1054,21 +1088,51 @@ def get_affine(
     shift is applied per output axis: ``-(N // 2 - N0 // 2)`` voxels, ``N`` the extended size,
     ``N0`` the ``ext_factors=1`` size, the adjoint NUFFT centre being at ``N // 2``. Voxel size
     and direction are unchanged.
+
+    ``recon_matrix`` (WI-0132): first ``lowres.reduced_affine`` (voxels ``N / N'`` times larger,
+    the FOV centre at ``N' // 2 + shift`` as ParaVision places it), then the ``ext_factors``
+    shift in the small grid's voxels.
     """
     affine = get_affine_helper(scan, reco_id, decimals=decimals, **kwargs)
     if affine is None:
         return None
     options = getattr(scan, "_sordino_options", None) or _build_options(kwargs)
-    if np.allclose(np.asarray(options.ext_factors, dtype=float), 1.0):
+    extended = not np.allclose(np.asarray(options.ext_factors, dtype=float), 1.0)
+    reduced = getattr(options, "recon_matrix", None) is not None
+    if not extended and not reduced:
         return affine
-    try:
+    reduction = None
+    if reduced:
+        # no fallback: a wrong voxel size would put the image in the wrong place
         recon_info = _parse_recon_info(scan)
-        shift = _ext_factor_shift(recon_info, options)
-    except Exception as exc:  # header without Matrix/orientation: keep the brkraw affine
-        logger.warning("sordino: ext_factors affine shift not applied (%s).", exc)
-        return affine
+        reduction = lowres.resolve(options.recon_matrix, recon_matrix(recon_info))
+    if reduction is not None:
+        # the full grid's shift (as _plan derives it), reconstruction order -> output order
+        full_shift = _grid_shift(scan, reco_id, recon_info) or (0.0, 0.0, 0.0)
+        order = orientation_axis_order(recon_info)
+        out_full = [reduction.base[order[j]] for j in range(3)]
+        out_small = [reduction.matrix[order[j]] for j in range(3)]
+        out_shift = [float(full_shift[order[j]]) for j in range(3)]
+    shift: Tuple[int, int, int] = (0, 0, 0)
+    if extended:
+        try:
+            recon_info = _parse_recon_info(scan)
+            shift = _ext_factor_shift(recon_info, options)
+        except Exception as exc:  # header without Matrix/orientation: keep the brkraw affine
+            if reduction is not None:
+                raise
+            logger.warning("sordino: ext_factors affine shift not applied (%s).", exc)
+            return affine
     affine_list = list(affine) if isinstance(affine, tuple) else [affine]
-    new_affine_list = [_apply_ext_factor_affine(aff, shift) for aff in affine_list]
+
+    def _one(aff):
+        if reduction is not None:
+            aff = lowres.reduced_affine(aff, reduction.scale, out_full, out_small, out_shift)
+            if decimals is not None:
+                aff = np.round(aff, decimals)
+        return _apply_ext_factor_affine(aff, shift)
+
+    new_affine_list = [_one(aff) for aff in affine_list]
     if isinstance(affine, tuple):
         return tuple(new_affine_list)
     return new_affine_list[0]

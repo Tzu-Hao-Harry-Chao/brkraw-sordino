@@ -42,6 +42,7 @@ hooks:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `ext_factors` | `1.0` | Scalar or 3 values. Enlarges the grid (so the FOV) at the same voxel size: axis `i` gets `int(Matrix[i] * ext_factors[i])` voxels (16 x 1.5 = 24, 16 x 1.1 = 17). Order: read, phase, slice of `PVM_Matrix`. |
+| `recon_matrix` | `null` | Lower resolution, same FOV: one value or 3 (read, phase, slice of `PVM_Matrix`; `60`, `[60, 60, 60]`, `60,60,60`). Voxels get `Matrix / recon_matrix` times larger; k-space is cut at the new Nyquist radius (samples beyond it are not used, no taper); weights and `estimate_k0` work on the kept samples. Not above `Matrix`, one ratio on every axis; `null` or `Matrix` is the full grid. Works with `ext_factors` (on the new grid), frames and `split_ch`. See Cautions. |
 | `ignore_samples` | `1` | Samples dropped at the start of every spoke (0 is read as 1). |
 | `offset` | `0` | First repetition to reconstruct. |
 | `num_frames` | `null` | Repetitions to reconstruct from `offset` (`null`: all). |
@@ -106,8 +107,8 @@ brkraw convert /path/to/study -s 11 -r 1 \
   check runs first and stops with the sizes; use larger `frame_spokes`, fewer repetitions
   (`num_frames`) or `frame_spokes: repetition`. A sliding window also keeps one running-sum
   copy per open frame start (`frame_spokes` / `frame_step` copies).
-- **NIfTI is uint16 with slope and intercept.** Converted files are stored as 16-bit
-  integers; the true value is `inter + slope * stored`.
+- **`recon_matrix` grid and values.** The grid is the one ParaVision writes for a scan of that matrix with the same FOV and centre (phantom: scan 13 at 120^3 reduced to 60 has the affine of the native 60^3 scan 18), so the FOV edges can move by half a full-resolution voxel. Values follow the full image's low-pass (phantom, Default: scale within 0.2 %, NRMSE 0.03); golden scans with `capped` or `pipe` weights re-estimate the weights on the kept samples, which put the global scale at 0.74 of the full image (shape kept; `k2`: 1.04).
+- **NIfTI is uint16 with slope and intercept.** Converted files are stored as 16-bit integers; the true value is `inter + slope * stored`.
 - **Frames:** `correct_spoketiming` cannot be combined with frames (use
   `frame_spokes: repetition`). `estimate_k0` is estimated once from all spokes read. NIfTI
   `pixdim[4]` is `frame_step` x the spoke TR in the unit asked for. Frame spokes, centre times
@@ -127,7 +128,7 @@ brkraw convert /path/to/study -s 11 -r 1 \
   the unmeasured centre, first acquired and first kept sample), `k0` (`[real, imag]` per channel and
   frame; with frames one estimate for all), `short_fid` (`fid_nbytes`, `expected_nbytes`,
   `frame_nbytes`, `frames_planned`, `frames_complete`; null for a complete FID; a short FID has its
-  own cache), `frames`, `density_weights`, `sequence_generation`. A Golden Grid head, if applied, logs a warning; no option.
+  own cache), `frames`, `density_weights`, `sequence_generation`, `recon_matrix` (null, or the matrix, ratio, samples kept per spoke, k-space radius kept and output scale). A Golden Grid head, if applied, logs a warning; no option.
 - **Sequence generations.** 0.1 (`mjm_zte_231005`), 0.2 (`sordino_260122_trig`), 0.3 (`sordino_260801`, golden sample extension) and 1.x (`sordino`, the stable release) are development generations and the release; zte is a general ZTE. 0.3 and 1.x share one ramp model, so the result does not depend on which a scan is: they are told apart by the method name only, and a scan whose method name says neither is shown as `0.3 or 1.x`. The x of 1.x is not read (the method header has no version string). Details: `docs/technical-note.md` section 4.
 
 ## For developers: tests and manual checks

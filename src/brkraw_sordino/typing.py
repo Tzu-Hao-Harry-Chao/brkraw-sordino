@@ -28,6 +28,9 @@ class Options:
     # WI-0113 run 6 (D-0199 1): density weights of golden scans (dcf.CHOICES); keyed through
     # the weight rule of golden scans only (hook._build_cache_params), not as a raw option.
     golden_weights: str = "capped"
+    # WI-0132 (D-0230): reconstruction matrix at the same FOV (lowres.py), read/phase/slice of
+    # PVM_Matrix; None = the acquisition matrix. Keyed only when set (hook._build_cache_params).
+    recon_matrix: Optional[Tuple[int, int, int]] = None
 
 
 __all__ = [

@@ -1,5 +1,13 @@
 # Unreleased (branch golden-weights-k0, on brkraw-060)
 
+New option `recon_matrix` (WI-0132, D-0230): reconstruct on a smaller matrix at the same FOV (`-H sordino:recon_matrix=60`
+or `[60, 60, 60]`; one ratio on every axis, not above `PVM_Matrix`). Each spoke is cut at the new Nyquist radius (a
+sphere, no taper), the density weights and `estimate_k0` work on the kept samples, and the values follow the full image's
+low-pass. The affine is the one ParaVision writes for that matrix (voxels `Matrix / recon_matrix` larger, the FOV centre
+kept). Leaving it out changes nothing (same results and cache keys). On the phantom (scan 13, 120^3 to 60^3): NRMSE 0.033
+against the full image's Fourier low-pass, scale within 0.2 %, affine equal to the native 60^3 scan 18. Golden scans
+with `capped`/`pipe` weights: same shape, global scale 0.74 of the full image (weights re-estimated on the kept samples).
+
 Documentation (WI-0122, no behaviour change): `README.md` is now the short entry (description, install, hook install,
 minimal use). `brkraw hook docs sordino` (`src/brkraw_sordino/docs.md`) shows the option tables, defaults and cautions.
 The algorithms, with their equations, are in `docs/technical-note.md`. `tests/test_docs.py` keeps the option tables in
