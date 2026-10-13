@@ -188,7 +188,7 @@ def find_cut(rows: Any, n_pro: int, reduction: Reduction, ignore_samples: int,
         rmax = rad if rmax is None else np.maximum(rmax, rad)
     assert rmax is not None
     n_samples = int(rmax.size)
-    over = np.nonzero(rmax > limit * (1.0 + 1e-12))[0]
+    over = np.nonzero(rmax > limit)[0]          # no slack: every kept point within the band (wi-0132-choi-1)
     n_keep = int(over[0]) if over.size else n_samples
     # a later sample back inside the limit (a curved spoke) is cut too: the prefix is what is kept
     if n_keep - ign < MIN_KEPT_SAMPLES:
