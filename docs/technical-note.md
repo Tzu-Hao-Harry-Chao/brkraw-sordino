@@ -344,7 +344,7 @@ virtual samples need are missing (and stops with an error when `estimate_k0` was
 
 **Gap size.** About $\tfrac43\pi\kappa^3$ grid points lie inside the gap of radius $\kappa$ (4 at $\kappa=1$, 14 at 1.5),
 and only the FOV support determines them. Synthetic sweep (WI-0137: straight spokes, two objects filling about 60 % and
-90 % of the FOV, matrix 24 and 48, $\sigma=4$, noise free and with 2 % and 5 % noise): with the fixed 10 iterations the
+90 % of the FOV, matrix 24 and 48, $\sigma=4$, noise free and with 2 % and 5 % noise): with 10 iterations the
 relative $K_0$ error (noise free) is at most 0.4 % up to $\kappa=1.3$, 0.2–8 % at 1.4 and 4–73 % at 1.5 (with 5 % noise:
 at most 2 % up to 1.3, matrix 24); with 40 iterations it
 stays below 0.1 % up to 1.8 (noise free) and with 160 below 0.5 % at 2.0 (with noise), so above 1.3 the iteration
@@ -362,8 +362,9 @@ $$\hat x=\arg\min_x\ \big\lVert W^{1/2}(Ax-\tilde y)\big\rVert^2
 \iff A^{\mathsf H}WA\,\hat x=A^{\mathsf H}W\tilde y .$$
 
 $\hat x$ lives on the reconstruction grid $\mathbf M$ itself (the FOV, or the extended FOV); the finite grid is the support constraint
-that determines the centre. It is solved by conjugate gradients [4] from $x_0=0$ in 10 iterations (fixed: the
-option is a switch). The estimated signal at $k=0$ is
+that determines the centre. It is solved by conjugate gradients [4] from $x_0=0$ in the iteration count of the
+gap rule above (10 up to $\kappa=1.3$, 40 up to 1.8, 160 above; set by the hook, no option: `estimate_k0` is an
+on/off switch). The estimated signal at $k=0$ is
 
 $$K_0=\sum_{\mathbf n}\hat x[\mathbf n]$$
 

@@ -8,7 +8,7 @@ This module fills it algebraically:
 
 1. Solve the weighted least-squares problem
    ``x = argmin || W^(1/2) (A x - y) ||^2`` (conjugate gradient, ``x0 = 0``,
-   ``N_ITER`` iterations) for the measured samples ``y`` on the integral
+   ``N_ITER`` iterations, more for a wide gap: ``iterations_for_gap``) for the measured samples ``y`` on the integral
    trajectory. The image grid is the output volume shape itself
    (``GRID_FACTOR = 1``, that is the FOV, or the extended FOV when
    ``ext_factors`` is not 1); the finite grid is the support constraint that
