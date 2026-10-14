@@ -1,5 +1,9 @@
 # Unreleased (branch golden-weights-k0, on brkraw-060)
 
+Documentation (WI-0138): `brkraw hook docs sordino` (`src/brkraw_sordino/docs.md`) is now a CLI usage page of
+37 lines, 80 columns: three usage lines and one line per option with its default. The option tables, cautions,
+developer checks and the size-estimate table it held moved unchanged to Appendix A of `docs/technical-note.md`.
+
 Behaviour change, `estimate_k0` on every trajectory (WI-0137, D-0234): `estimate_k0` and `correct_ramptime` are now
 independent. With `correct_ramptime: false` the k-space centre is estimated on the straight trajectory (the virtual
 samples continue each spoke's line back to the RF centre); a general ZTE (no `RampTime`) is no longer reconstructed

@@ -134,30 +134,33 @@ def test_golden_lists_ignore_the_default_trajectory_keys(mode):
 
 # ------------------------------------------------------------------ docs
 #: WI-0122 moved the "Golden trajectories and frames" section of the README: the frame options and
-#: the frames example are in docs.md (the "Frames" paragraph under the reconstruction options and
-#: the Cautions), the directions and the Golden Grid head (ProUnderSampling) in the technical note.
+#: the frames example went to docs.md and, since WI-0138, with the rest of the old docs.md body to Appendix A
+#: of the technical note (the "Frames" paragraph under A.2 and the Cautions); docs.md keeps one line per
+#: frame option. The directions and the Golden Grid head (ProUnderSampling) are in the note's sections.
 DOCS_MD = ROOT / "src/brkraw_sordino/docs.md"
 NOTE_MD = ROOT / "docs/technical-note.md"
 
 
 def _frames_part(text):
-    """docs.md from the frames paragraph to the end of the Cautions (frame options, example, caution)."""
+    """Appendix A from the frames paragraph to the end of the Cautions (frame options, example, caution)."""
     start = text.index("Frames (golden scans;")
-    return text[start:text.index("## Size estimate without reading data")]
+    return text[start:text.index("### A.5 Size estimate without reading data")]
 
 
-def test_docs_golden_frames_are_in_docs_md_and_not_repeated_in_the_readme():
+def test_docs_golden_frames_are_in_the_note_and_not_repeated_in_the_readme():
     readme = (ROOT / "README.md").read_text()
     assert "## Golden trajectories and frames" not in readme
     assert "frame_spokes" not in readme
-    part = _frames_part(DOCS_MD.read_text())
+    part = _frames_part(NOTE_MD.read_text())
     assert "TrajectoryMode" in part and "frame_spokes" in part
+    assert {"frame_spokes", "frame_step", "frame_accumulate"} <= set(re.findall(r"^  (frame_[a-z_]+)=",
+                                                                             DOCS_MD.read_text(), re.M))
 
 
 def test_docs_golden_options_are_real_options(tmp_path):
     import yaml
 
-    text = DOCS_MD.read_text()
+    text = NOTE_MD.read_text()
     part = _frames_part(text)
     names = set(re.findall(r"^\| `(frame_[a-z_]+)` \|", part, re.M))
     assert names == {"frame_spokes", "frame_step", "frame_accumulate"}

@@ -41,10 +41,11 @@ brkraw convert /path/to/study -s 3 -r 1 --hook-arg sordino:ext_factors=1.2
 
 ## More
 
-- Options, defaults, memory and disk cautions, YAML examples: `brkraw hook docs sordino`
+- Options and defaults, one line each: `brkraw hook docs sordino`
   (the file `src/brkraw_sordino/docs.md`).
 - Algorithms and equations (trajectories, density weights, k-space centre estimate, frames,
-  affine, caches): [`docs/technical-note.md`](docs/technical-note.md).
+  affine, caches) and, in its Appendix A, every option in detail with the memory and disk
+  cautions and YAML examples: [`docs/technical-note.md`](docs/technical-note.md).
 - BIDS extension proposal draft for ZTE-based fMRI: [`docs/bep/bep-zte-fmri.md`](docs/bep/bep-zte-fmri.md).
 - Release history: [`RELEASE_NOTES.md`](RELEASE_NOTES.md).
 - Axis orientation of the output: `notebooks/orientation.ipynb`.

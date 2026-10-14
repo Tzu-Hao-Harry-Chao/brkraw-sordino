@@ -1,9 +1,10 @@
 """The three documents agree with the code (WI-0122).
 
 README.md (GitHub, PyPI) is the short entry; src/brkraw_sordino/docs.md is what
-``brkraw hook docs sordino`` shows (option tables); docs/technical-note.md holds the
-algorithms with LaTeX equations. These tests check that the option tables name exactly the
-options the code knows, with the code's defaults, that README and docs.md do not repeat each
+``brkraw hook docs sordino`` shows (a CLI usage page, one line per option, WI-0138);
+docs/technical-note.md holds the algorithms with LaTeX equations and, in Appendix A, the full
+option tables and practical notes. These tests check that docs.md and the appendix name exactly
+the options the code knows, with the code's defaults, that README and docs.md do not repeat each
 other, that the math has no syntax slip GitHub would show as an error, and that the equations
 of the note give what the code computes (constants, closed forms, small examples).
 """
@@ -36,9 +37,18 @@ def _table_rows(text):
     return rows
 
 
+#: docs.md is a CLI usage page (WI-0138): one line per option, ``  key=default   text``
+_DOCS_OPTION = re.compile(r"^  ([a-z_0-9]+)=(\S*)\s+(\S.*)$")
+
+
 def _option_rows():
-    """Rows of the three option tables (reconstruction, frames, read-time), not the info-dict table."""
-    head = DOCS.split("## Reconstruction options", 1)[1].split("## Cautions", 1)[0]
+    """The option lines of docs.md (reconstruction, frames, read-time): (name, default, text)."""
+    return [m.groups() for m in map(_DOCS_OPTION.match, DOCS.splitlines()) if m]
+
+
+def _note_option_rows():
+    """Rows of the three option tables of the note's Appendix A, not the info-dict table."""
+    head = NOTE.split("### A.2 Reconstruction options", 1)[1].split("### A.3 Cautions", 1)[0]
     return _table_rows(head)
 
 
@@ -58,17 +68,19 @@ def _value(cell):
     return text
 
 
-def test_option_names_are_the_code_options():
-    documented = {name for name, _, _ in _option_rows()}
+@pytest.mark.parametrize("rows", [_option_rows, _note_option_rows], ids=["docs_md", "note_appendix"])
+def test_option_names_are_the_code_options(rows):
+    documented = {name for name, _, _ in rows()}
     code = {f.name for f in dataclasses.fields(Options)} | set(hook.READ_KEYS)
     assert documented == code
-    names = [name for name, _, _ in _option_rows()]
+    names = [name for name, _, _ in rows()]
     assert len(names) == len(set(names)), "an option is documented twice"
 
 
-def test_option_defaults_are_the_code_defaults(tmp_path):
+@pytest.mark.parametrize("rows", [_option_rows, _note_option_rows], ids=["docs_md", "note_appendix"])
+def test_option_defaults_are_the_code_defaults(tmp_path, rows):
     built = dataclasses.asdict(hook._build_options({"cache_dir": str(tmp_path)}))
-    rows = {name: _value(default) for name, default, _ in _option_rows()}
+    rows = {name: _value(default) for name, default, _ in rows()}
     for name, value in built.items():
         doc = rows[name]
         if name == "cache_dir":
@@ -78,17 +90,19 @@ def test_option_defaults_are_the_code_defaults(tmp_path):
         elif name == "offreso_freqs":
             assert doc is None and value == ()
         else:
-            assert doc == value, f"{name}: docs.md says {doc!r}, the code builds {value!r}"
+            assert doc == value, f"{name}: the documents say {doc!r}, the code builds {value!r}"
     assert rows["cache_dir"] == "~/.brkraw/cache/sordino"
     assert '"cache" / "sordino"' in inspect.getsource(hook._get_cache_dir)
 
 
 def test_read_time_defaults():
-    rows = {name: _value(default) for name, default, _ in _option_rows()}
-    assert rows["frames"] is None and rows["axis"] is None
-    assert rows["allow_short_fid"] is True
+    for rows, limit in ((_option_rows, "auto"), (_note_option_rows, "half of physical memory")):
+        rows = {name: _value(default) for name, default, _ in rows()}
+        assert rows["frames"] is None and rows["axis"] is None
+        assert rows["allow_short_fid"] is True
+        assert rows["max_memory_gb"] == limit
+    assert "auto: half of physical memory" in DOCS
     assert 'kwargs.get("allow_short_fid", True)' in inspect.getsource(hook._plan)
-    assert rows["max_memory_gb"] == "half of physical memory"
     assert memguard.DEFAULT_FRACTION == 0.5
     assert memguard.FALLBACK_LIMIT_BYTES == 4 * 1024 ** 3
 
@@ -96,8 +110,21 @@ def test_read_time_defaults():
 def test_documented_choices_exist():
     assert dcf.CHOICES == ("capped", "pipe", "k2") and dcf.DEFAULT == "capped"
     for word in dcf.CHOICES:
-        assert f"`{word}`" in DOCS
-    assert set(golden.MODES) <= set(re.findall(r"`(\w+Sampling|Default)`", DOCS))
+        assert f"`{word}`" in NOTE
+    assert "capped, pipe or k2" in DOCS
+    assert set(golden.MODES) <= set(re.findall(r"`(\w+Sampling|Default)`", NOTE))
+
+
+def test_docs_md_is_a_cli_usage_page():
+    """WI-0138: what ``brkraw hook docs sordino`` prints is short, 80 columns, usage lines first."""
+    lines = DOCS.splitlines()
+    assert len(lines) <= 40
+    assert max(len(ln) for ln in lines) <= 80, [ln for ln in lines if len(ln) > 80]
+    assert lines[2].startswith("usage: brkraw convert STUDY -s SCAN")
+    assert "-H sordino:KEY=VALUE" in DOCS and "--hook-args-yaml FILE" in DOCS
+    assert "brkraw hook preset sordino" in DOCS
+    assert not [ln for ln in lines if ln.startswith(("|", "#", "```"))], "no tables, headings or code blocks"
+    assert "docs/technical-note.md, Appendix A" in DOCS and "## Appendix A. Options and practical notes" in NOTE
 
 
 def test_info_keys_are_documented():
@@ -106,7 +133,7 @@ def test_info_keys_are_documented():
                  "recon_chunk_spokes", "recon_chunks", "recon_frames_open", "recon_dcf_nbytes", "recon_k0_method", "recon_k0_reason", "disk_nbytes",
                  "disk_free_nbytes", "limit_nbytes", "limit_source", "frames_planned", "fid_short_nbytes",
                  "sequence_generation", "sequence_method"]
-    table = DOCS.split("## Size estimate without reading data", 1)[1]
+    table = NOTE.split("### A.5 Size estimate without reading data", 1)[1]
     for key in info_keys:
         assert f"`{key}`" in table, key
     source = (inspect.getsource(hook._output_info) + inspect.getsource(hook._plan)
@@ -132,7 +159,6 @@ def test_readme_is_short_and_does_not_repeat_docs_md():
     readme_lines = {ln.strip() for ln in lines if len(ln.strip()) >= 40}
     docs_lines = {ln.strip() for ln in DOCS.splitlines()}
     assert not (readme_lines & docs_lines), readme_lines & docs_lines
-    assert 100 <= len(DOCS.splitlines()) <= 160
 
 
 # ---------------------------------------------------------------- LaTeX of the note
