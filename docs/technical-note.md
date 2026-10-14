@@ -338,8 +338,21 @@ The dead time leaves the centre unmeasured. The first acquired sample lies at th
 $\kappa_0=T_0/(\Delta t\,\sigma)$ k-grid units ($1/\mathrm{FOV}$; one unit is $\sigma$ samples along a spoke), the
 first kept sample at $(T_0+n_{\mathrm{ign}}\Delta t)/(\Delta t\,\sigma)$. Without `estimate_k0` this centre is left empty. Both radii are logged (info for a general ZTE gap over
 one unit, debug otherwise) and kept as `scan._sordino_recon_meta["kspace_gap"]` and in the recon cache
-`.json`. The estimate applies to SORDINO 0.1 to 1.x only; on a general ZTE, or without the sequence timing
-values, it is switched off with an info message.
+`.json`. The estimate runs on every trajectory (WI-0137): the ramp-corrected SORDINO one, the straight one of
+`correct_ramptime=false` and a general ZTE; it is switched off with an info message only when the values the
+virtual samples need are missing (and stops with an error when `estimate_k0` was given).
+
+**Gap size.** About $\tfrac43\pi\kappa^3$ grid points lie inside the gap of radius $\kappa$ (4 at $\kappa=1$, 14 at 1.5),
+and only the FOV support determines them. Synthetic sweep (WI-0137: straight spokes, two objects filling about 60 % and
+90 % of the FOV, matrix 24 and 48, $\sigma=4$, noise free and with 2 % and 5 % noise): with the fixed 10 iterations the
+relative $K_0$ error (noise free) is at most 0.4 % up to $\kappa=1.3$, 0.2–8 % at 1.4 and 4–73 % at 1.5 (with 5 % noise:
+at most 2 % up to 1.3, matrix 24); with 40 iterations it
+stays below 0.1 % up to 1.8 (noise free) and with 160 below 0.5 % at 2.0 (with noise), so above 1.3 the iteration
+count, not the data, limits the fill. The iteration count therefore follows the gap of the scan
+(`kcentre.iterations_for_gap`): 10 up to $\kappa=1.3$, 40 up to 1.8, 160 above. SORDINO data have
+$\kappa\approx0.5$–$1.2$ and keep 10 (same result and cache key as before); a wider gap stores the count in the recon
+cache key (`K0Iterations`) and logs it. Above $\kappa=2.0$, outside the measured range, the hook warns
+(`kcentre.GAP_WARN_KGRID`) and still reconstructs.
 
 **Estimate.** With $A$ the type-2 NUFFT onto the measured sample positions,
 $(Ax)_m=\sum_{\mathbf n}x[\mathbf n]\,e^{-\mathrm i\boldsymbol\omega_m\cdot\boldsymbol\nu}$, $W=\mathrm{diag}(w)$ and the phased data
@@ -357,7 +370,8 @@ $$K_0=\sum_{\mathbf n}\hat x[\mathbf n]$$
 (one value per channel; with frames, one per channel for all frames). The image is then the adjoint
 (section 7) over the measured samples and over **virtual leading samples**: for each spoke the times
 $t_m=t_{\mathrm{first}}-m\,\Delta t\ge 0$ ($m=1,2,\dots$, $t_{\mathrm{first}}$ the time of the first kept sample, down to the RF
-centre) on the spoke's own ramp trajectory (section 4), with predicted values $\hat y^{\mathrm v}=A_{\mathrm v}\hat x$ and weights
+centre) on the spoke's own ramp trajectory (section 4; with `correct_ramptime=false` on the spoke's straight
+line, sample index $j+T_0/\Delta t$, $j=n_{\mathrm{ign}}-m$, the fixed-vector form of section 4), with predicted values $\hat y^{\mathrm v}=A_{\mathrm v}\hat x$ and weights
 $w^{\mathrm v}$ of the same rule as section 6 (the maximum $d_{\max}$ also covers them). They carry no shift factor: $\hat x$ is
 already on the shifted grid. Only the centre comes from the iterative solution; every measured sample
 enters as in the plain adjoint.

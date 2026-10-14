@@ -1,5 +1,17 @@
 # Unreleased (branch golden-weights-k0, on brkraw-060)
 
+Behaviour change, `estimate_k0` on every trajectory (WI-0137, D-0234): `estimate_k0` and `correct_ramptime` are now
+independent. With `correct_ramptime: false` the k-space centre is estimated on the straight trajectory (the virtual
+samples continue each spoke's line back to the RF centre); a general ZTE (no `RampTime`) is no longer reconstructed
+without it. The default stays `estimate_k0: true`, so **results with `correct_ramptime: false` and general ZTE results
+change** (the centre is filled); their recon caches get a new key, and `estimate_k0: false` gives the previous result
+and finds the old caches. An explicit `estimate_k0: true` with `correct_ramptime: false` is no longer an error. Every
+other combination keeps its results and cache keys. The least-squares solve of the centre uses 10 iterations up to an
+unsampled centre of 1.3 k-grid units (every SORDINO scan: unchanged), 40 up to 1.8 and 160 above (synthetic sweep:
+with 10 the fill degrades above 1.3); the count enters the cache key only when it is not 10, and a centre wider than
+2.0 k-grid units gives a warning (the reconstruction still runs). ZTE-mode scans of `sordino_260801` (`SequenceMode = ZTE`) are not detected from the header: set
+`correct_ramptime: false` for them.
+
 New option `recon_matrix` (WI-0132, D-0230): reconstruct on a smaller matrix at the same FOV (`-H sordino:recon_matrix=60`
 or `[60, 60, 60]`; one ratio on every axis, not above `PVM_Matrix`). Each spoke is cut at the new Nyquist radius (a
 sphere, no taper), the density weights and `estimate_k0` work on the kept samples, and the values follow the full image's
