@@ -1,7 +1,10 @@
-"""Estimated k-space centre for SORDINO (option ``estimate_k0``, BRK-0066).
+"""Estimated k-space centre (option ``estimate_k0``, BRK-0066, WI-0137).
 
 The dead time leaves the k-space centre unmeasured: the first kept sample lies
-0.5-1.2 k-grid units from k = 0. This module fills it algebraically:
+0.5-1.2 k-grid units from k = 0 in SORDINO data, often more in a general ZTE
+(``GAP_WARN_KGRID``). The same fill runs on the ramp-corrected SORDINO trajectory,
+on the straight trajectory of ``correct_ramptime=false`` and on a general ZTE.
+This module fills it algebraically:
 
 1. Solve the weighted least-squares problem
    ``x = argmin || W^(1/2) (A x - y) ||^2`` (conjugate gradient, ``x0 = 0``,
@@ -27,8 +30,9 @@ convolution on a 2N grid (``serial.ToeplitzKernel``), so no step holds all
 samples. ``fill_centre`` stays as the whole-array reference that the tests
 (``tests/test_serial_recon.py``) compare it with.
 
-The grid factor and the iteration count are fixed on purpose (BRK-0066: the
-option is an on/off switch). Development history and the comparison with
+The grid factor is fixed on purpose (BRK-0066: the option is an on/off switch).
+The iteration count is ``N_ITER`` for every gap up to 1.3 k-grid units and grows
+with wider gaps (``iterations_for_gap``, WI-0137 run 2); there is no option for it. Development history and the comparison with
 other centre estimates: ``tools/eval_timing_centre.py`` (WI-0058), which keeps
 its own copy of this method for the parity test in ``tests/test_kcentre.py``.
 """
@@ -106,15 +110,89 @@ def least_squares_image(kspace: np.ndarray, traj: np.ndarray, shape: Sequence[in
     return x, hist
 
 
+def straight_offset_samples(recon_info: Dict[str, Any]) -> float:
+    """RF centre to the first sample, in samples: the offset of ``traj.calc_radial_traj3d``.
+
+    ``AcqDelayTotal`` x ``PVM_EffSWh`` x ``OverSampling`` (the dead time over the
+    sample interval), the same expression as ``traj._trajectory_inputs`` with
+    ``correct_ramptime=false``. Raises KeyError or ValueError when a value is missing.
+    """
+    adt = recon_info.get("AcqDelayTotal_us")
+    bw = recon_info.get("EffBandwidth_Hz")
+    os_ = recon_info.get("OverSampling")
+    missing = [n for n, v in (("AcqDelayTotal", adt), ("PVM_EffSWh", bw), ("OverSampling", os_)) if v is None]
+    if missing:
+        raise ValueError(f"values missing for the straight-line trajectory: {missing}")
+    return float(adt * (10 ** -6) * bw * os_)
+
+
+def gap_used_kgrid(recon_info: Dict[str, Any], ignore_samples: int = 1) -> float:
+    """Radius of the first kept sample in k-grid units (1/FOV), along the spoke.
+
+    ``(offset + ignore_samples) / OverSampling`` with the offset of
+    ``straight_offset_samples``; equals ``timing.kspace_gap(...)["gap_used_kgrid"]``
+    (exact for a constant gradient; the SORDINO ramp moves it by a few hundredths).
+    The estimated centre has to fill this radius (``GAP_WARN_KGRID``).
+    """
+    return (straight_offset_samples(recon_info) + max(int(ignore_samples), 0)) / float(recon_info["OverSampling"])
+
+
+#: Iterations of the least-squares solve by the radius of the unsampled centre
+#: (``gap_used_kgrid``, k-grid units), WI-0137 run 2: ``(upper radius, iterations)``,
+#: the first row whose radius is not exceeded, ``GAP_ITER_MAX`` above the last. The
+#: fill is a least-squares solve with the FOV as the only constraint: about
+#: (4/3) pi r^3 k-grid points inside the gap are unknown (4 at r = 1, 14 at r = 1.5,
+#: 34 at r = 2). Synthetic sweep (WI-0137: straight spokes, two objects, matrix 24 and
+#: 48, OverSampling 4, noise 0, 2 and 5 %): with 10 iterations the relative K0 error
+#: (noise free) is at most 0.4 % up to r = 1.3, 0.2-8 % at 1.4 and 4-73 % at 1.5; with
+#: 40 below 0.1 % up to 1.8 (4-29 % at 2.0); with 160 at most 0.5 % at 2.0 with 5 %
+#: noise. Up to 1.3 (every SORDINO scan, 0.5-1.2) the count stays ``N_ITER``, so those
+#: results and cache keys are unchanged.
+GAP_ITERATIONS: Tuple[Tuple[float, int], ...] = ((1.3, N_ITER), (1.8, 40))
+GAP_ITER_MAX: int = 160
+#: Radius above which ``estimate_k0`` logs a warning: beyond the measured range of
+#: ``GAP_ITERATIONS`` (WI-0137 run 2). The reconstruction still runs.
+GAP_WARN_KGRID: float = 2.0
+
+
+def iterations_for_gap(gap_kgrid: float) -> int:
+    """Iterations of the least-squares solve for an unsampled centre of radius ``gap_kgrid`` (``GAP_ITERATIONS``)."""
+    for upper, n_iter in GAP_ITERATIONS:
+        if float(gap_kgrid) <= upper:
+            return int(n_iter)
+    return int(GAP_ITER_MAX)
+
+
 def leading_points(recon_info: Dict[str, Any], ignore_samples: int = 1,
-                   grad: np.ndarray = None) -> np.ndarray:
+                   grad: np.ndarray = None, straight: bool = False) -> np.ndarray:
     """(n_pro, M, 3) k positions of the virtual leading samples.
 
     Times ``t_first - m * dwell`` (m = 1..M, t >= 0) before the first kept
     sample, on each spoke's own integral-model trajectory (the dropped samples
     and the dead time at the real sample spacing, down to the RF centre).
     Same units and ramp model as ``traj.calc_radial_traj3d_integral``.
+
+    ``straight=True`` (``correct_ramptime=false``, WI-0137): the same times on the
+    straight line of ``traj.calc_radial_traj3d``, sample index ``j + offset``
+    (``straight_offset_samples``) along the spoke's own vector, j = ignore - m,
+    down to ``j + offset >= 0`` (the RF centre). Needs only the values the
+    straight trajectory reads (no ramp or pulse timing).
     """
+    if straight:
+        n = int(int(recon_info["Matrix"][0]) / 2 * float(recon_info["OverSampling"]))
+        off = straight_offset_samples(recon_info)
+        idx = []
+        m = 1
+        while int(ignore_samples) - m + off >= 0:
+            idx.append(int(ignore_samples) - m + off)
+            m += 1
+        if not idx:
+            raise ValueError("no room for virtual samples before the first kept sample")
+        idx.sort()
+        if grad is None:
+            grad, _ = spoke_directions(recon_info)
+        samp = (np.asarray(idx, dtype=float) / (n - 1)) / 2.0
+        return samp[None, :, None] * np.asarray(grad, dtype=float).T[:, None, :]
     seq = timing_mod.read_timing(recon_info)
     tune = timing_mod.tuning_for(seq.version)
     n = int(int(recon_info["Matrix"][0]) / 2 * float(recon_info["OverSampling"]))
@@ -166,5 +244,16 @@ def fill_centre(kspace: np.ndarray, traj: np.ndarray, virtual_traj: np.ndarray,
     return img, {"k0": k0, "virtual_samples": int(virtual_traj.shape[1]), "cg_residual_norms": hist}
 
 
-__all__ = ["N_ITER", "GRID_FACTOR", "density_weight", "least_squares_image", "leading_points",
-           "fill_centre"]
+def k0_iterations(recon_info: Dict[str, Any]) -> int:
+    """The iteration count the hook chose for this scan (``recon_info["K0Iterations"]``), else ``N_ITER``.
+
+    The hook writes the key only when the count is not ``N_ITER`` (a wide gap,
+    ``iterations_for_gap``), so the cache keys of every other scan are unchanged.
+    """
+    value = recon_info.get("K0Iterations")
+    return N_ITER if value is None else int(value)
+
+
+__all__ = ["N_ITER", "GRID_FACTOR", "GAP_ITERATIONS", "GAP_ITER_MAX", "GAP_WARN_KGRID", "density_weight",
+           "least_squares_image", "straight_offset_samples", "gap_used_kgrid", "iterations_for_gap",
+           "k0_iterations", "leading_points", "fill_centre"]

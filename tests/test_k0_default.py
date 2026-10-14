@@ -2,13 +2,12 @@
 
 Rules:
 
-* not given and ``correct_ramptime`` on: on;
-* not given and ``correct_ramptime`` off: off, with one info line (no error: the user did not
-  ask for it);
-* given as true with ``correct_ramptime`` off: the error as before;
+* not given: on, whatever ``correct_ramptime`` is (independent since WI-0137, D-0234; with the
+  ramp correction off the centre is estimated on the straight trajectory);
+* given: its own value, with or without ``correct_ramptime`` (no error);
 * not given and the scan has no sequence timing (the solve cannot run): off with one info line;
   given as true: the error as before;
-* a general ZTE: off with the info line as before;
+* a general ZTE: follows the option like every scan (WI-0137; was switched off);
 * ``brkraw hook preset sordino`` (``asdict(_build_options({}))``) shows ``estimate_k0: true``.
 """
 import logging
@@ -40,18 +39,18 @@ def test_preset_shows_it_on(tmp_path, monkeypatch):
     assert preset["golden_weights"] == "capped"
 
 
-def test_off_without_error_when_ramp_correction_is_off(tmp_path, caplog):
+def test_stays_on_when_ramp_correction_is_off(tmp_path, caplog):
+    # WI-0137 (D-0234): no automatic off and no info line any more
     with caplog.at_level(logging.INFO, logger="brkraw_sordino.hook"):
         o = _opts(tmp_path, correct_ramptime=False)
-    assert (o.estimate_k0, o.correct_ramptime) == (False, False)
-    lines = [r for r in caplog.records if "estimate_k0" in r.getMessage()]
-    assert len(lines) == 1 and lines[0].levelno == logging.INFO
-    assert "correct_ramptime" in lines[0].getMessage()
+    assert (o.estimate_k0, o.correct_ramptime) == (True, False)
+    assert not [r for r in caplog.records if "estimate_k0" in r.getMessage()]
 
 
-def test_explicit_true_with_ramp_correction_off_is_still_an_error(tmp_path):
-    with pytest.raises(ValueError, match="estimate_k0"):
-        _opts(tmp_path, estimate_k0=True, correct_ramptime=False)
+def test_explicit_true_with_ramp_correction_off_is_accepted(tmp_path):
+    o = _opts(tmp_path, estimate_k0=True, correct_ramptime=False)
+    assert (o.estimate_k0, o.correct_ramptime) == (True, False)
+    assert _resolve_k0(o, _info("v3")).estimate_k0 is True
 
 
 def test_explicit_false_stays_off(tmp_path):
@@ -59,8 +58,8 @@ def test_explicit_false_stays_off(tmp_path):
     assert _opts(tmp_path, estimate_k0="false").estimate_k0 is False
 
 
-def test_general_zte_still_switches_it_off(tmp_path):
-    assert _resolve_k0(_opts(tmp_path), _info("zte")).estimate_k0 is False
+def test_general_zte_keeps_it_on(tmp_path):
+    assert _resolve_k0(_opts(tmp_path), _info("zte")).estimate_k0 is True
     assert _resolve_k0(_opts(tmp_path), _info("v3")).estimate_k0 is True
 
 

@@ -552,7 +552,8 @@ def recon_dataobj(fid_fobj,
     # the estimate (WI-0099, D-0143). Both are filled in this pass and solve the same problem.
     kernel = None
     if virtual_traj is not None:
-        from .kcentre import N_ITER
+        from .kcentre import k0_iterations
+        n_iter = k0_iterations(recon_info)     # N_ITER unless the centre gap is wide (WI-0137)
         choice = memguard.k0_method(n_pro, n_points, n_receivers, volume_shape)
         method = choice["method"] if k0_method is None else str(k0_method)
         if method == "toeplitz":
@@ -644,7 +645,7 @@ def recon_dataobj(fid_fobj,
                 adj = None                     # its NUFFT grid is not needed during the solve
             preds = []
             for ch in range(n_receivers):
-                x, _ = serial.conjugate_gradient(kernel.normal, acc[ch], N_ITER)
+                x, _ = serial.conjugate_gradient(kernel.normal, acc[ch], n_iter)
                 frame_k0.append(complex(x.sum()))
                 preds.append(serial.forward(x, virtual_traj))
                 del x

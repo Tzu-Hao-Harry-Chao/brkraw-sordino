@@ -155,19 +155,10 @@ def _build_options(kwargs: Dict[str, Any]) -> Options:
     offreso_freqs = _normalize_offreso_freqs(kwargs.get("offreso_freqs"))
 
     correct_ramptime = parse_bool("correct_ramptime", kwargs.get("correct_ramptime", True))
-    # estimate_k0 is on by default (WI-0113 run 6, D-0200 2). Asked for explicitly it needs
-    # the ramp correction (error); by default it follows the ramp correction (info line).
-    if "estimate_k0" in kwargs:
-        estimate_k0 = parse_bool("estimate_k0", kwargs["estimate_k0"])
-        if estimate_k0 and not correct_ramptime:
-            raise ValueError(
-                "estimate_k0=true needs correct_ramptime=true: the estimated centre samples "
-                "lie on the ramp-corrected trajectory")
-    else:
-        estimate_k0 = correct_ramptime
-        if not correct_ramptime:
-            logger.info("estimate_k0 (on by default) is off because correct_ramptime is false: the "
-                        "estimated centre samples lie on the ramp-corrected trajectory.")
+    # estimate_k0 is on by default (WI-0113 run 6, D-0200 2) and independent of correct_ramptime
+    # (WI-0137, D-0234): with the ramp correction off the centre is estimated on the straight
+    # trajectory (kcentre.leading_points(straight=True)).
+    estimate_k0 = parse_bool("estimate_k0", kwargs.get("estimate_k0", True))
     golden_weights = dcf.parse_choice(kwargs.get("golden_weights", dcf.DEFAULT))
 
     return Options(
@@ -197,24 +188,73 @@ class K0TimingError(ValueError):
 
 
 def _resolve_k0(options: Options, recon_info: Dict[str, Any]) -> Options:
-    """``estimate_k0`` applies to SORDINO 0.1 to 1.x only (BRK-0066).
+    """Check that ``estimate_k0`` can run on this scan (BRK-0066, WI-0137).
 
-    A general ZTE keeps the plain adjoint: the option is switched off in the
-    options (so the cache key equals the plain run) and an info line says so.
+    The option follows its own value for every trajectory (WI-0137, D-0234): the
+    ramp-corrected SORDINO trajectory, the straight trajectory of
+    ``correct_ramptime=false`` and a general ZTE (no RampTime; constant gradient,
+    the same straight line). Raises ``K0TimingError`` when the values the virtual
+    samples need are missing: the sequence timing with the ramp correction on, the
+    straight-line values (``AcqDelayTotal``, ``PVM_EffSWh``, ``OverSampling``) with it off.
     """
     if not options.estimate_k0:
         return options
     from . import timing as timing_mod
 
     try:
-        version = timing_mod.read_timing(recon_info).version
+        if getattr(options, "correct_ramptime", True):
+            timing_mod.read_timing(recon_info)
+        else:
+            kcentre.straight_offset_samples(recon_info)
     except (KeyError, TypeError, ValueError) as exc:
         raise K0TimingError(f"estimate_k0 needs the sequence timing parameters: {exc}") from exc
-    if version == "zte":
-        logger.info("estimate_k0 applies to SORDINO 0.1 to 1.x only; general ZTE data are reconstructed "
-                    "without it.")
-        options.estimate_k0 = False
     return options
+
+
+def _leading_points(recon_info: Dict[str, Any], options: Options) -> np.ndarray:
+    """``kcentre.leading_points`` on the trajectory the options choose (straight without the ramp correction)."""
+    return kcentre.leading_points(recon_info, options.ignore_samples or 1,
+                                  straight=not getattr(options, "correct_ramptime", True))
+
+
+def _set_k0_iterations(recon_info: Dict[str, Any], options: Options) -> None:
+    """Iterations of the centre solve from the gap (``kcentre.iterations_for_gap``, WI-0137 run 2).
+
+    Written to ``recon_info["K0Iterations"]`` (read by ``recon_dataobj`` and
+    ``recon_frames``, keyed with recon_info) only when it is not ``kcentre.N_ITER``:
+    a gap up to 1.3 k-grid units keeps the key and the result it had before.
+    """
+    recon_info.pop("K0Iterations", None)
+    if not options.estimate_k0:
+        return
+    try:
+        gap = kcentre.gap_used_kgrid(recon_info, options.ignore_samples or 1)
+    except (KeyError, TypeError, ValueError):
+        return
+    n_iter = kcentre.iterations_for_gap(gap)
+    if n_iter != kcentre.N_ITER:
+        recon_info["K0Iterations"] = n_iter
+
+
+def _warn_centre_gap(recon_info: Dict[str, Any], options: Options) -> None:
+    """Log the centre ``estimate_k0`` fills: its iterations when wide, a warning above ``kcentre.GAP_WARN_KGRID``."""
+    try:
+        gap = kcentre.gap_used_kgrid(recon_info, options.ignore_samples or 1)
+    except (KeyError, TypeError, ValueError):
+        return
+    n_iter = kcentre.k0_iterations(recon_info)
+    if gap > kcentre.GAP_WARN_KGRID:
+        logger.warning(
+            "sordino: estimate_k0 fills a wide unsampled k-space centre\n"
+            "  first kept sample  %.2f k-grid units from k = 0 (warning above %.1f)\n"
+            "  solved with %d iterations; the estimated centre is less certain,\n"
+            "  compare with estimate_k0=false",
+            gap, kcentre.GAP_WARN_KGRID, n_iter)
+    elif n_iter != kcentre.N_ITER:
+        logger.info("estimate_k0: unsampled centre radius %.2f k-grid units, %d iterations (%d up to %.1f).",
+                    gap, n_iter, kcentre.N_ITER, kcentre.GAP_ITERATIONS[0][0])
+    else:
+        logger.debug("estimate_k0: unsampled centre radius %.2f k-grid units", gap)
 
 
 def _parse_recon_info(scan):
@@ -646,8 +686,7 @@ def _output_info(recon_info: Dict[str, Any], options: Options, cached_shape, cac
         # golden trajectories (WI-0113 run 5): the weights of one repetition are held throughout
         n_kept = int(recon_info["NPoints"]) - int(options.ignore_samples or 1)
         if options.estimate_k0:
-            from .kcentre import leading_points
-            n_kept += int(leading_points(recon_info, options.ignore_samples or 1).shape[1])
+            n_kept += int(_leading_points(recon_info, options).shape[1])
         dcf_share = memguard.dcf_nbytes(int(recon_info["NPro"]), n_kept, vol)
     if not cached:
         budget = int(limit["limit_nbytes"]) - read_nbytes - dcf_share
@@ -664,8 +703,7 @@ def _output_info(recon_info: Dict[str, Any], options: Options, cached_shape, cac
             # the frame written, on top of the serial chunk
             n_virtual = 0
             if options.estimate_k0:
-                from .kcentre import leading_points
-                n_virtual = int(leading_points(recon_info, options.ignore_samples or 1).shape[1])
+                n_virtual = int(_leading_points(recon_info, options).shape[1])
             recon_share += memguard.frames_nbytes(
                 frame_plan.max_open, n_ch, vol, estimate_k0=bool(options.estimate_k0),
                 n_pro=int(recon_info["NPro"]), n_virtual=n_virtual)
@@ -756,6 +794,8 @@ def _plan(scan: Any, reco_id: Optional[int], kwargs: Dict[str, Any]) -> Dict[str
         # on by default (D-0200 2): a scan without the timing values is reconstructed without it
         logger.info("estimate_k0 (on by default) is off for this scan: %s", exc)
         options.estimate_k0 = False
+    # a wide centre gap gets more iterations (WI-0137 run 2), keyed only then
+    _set_k0_iterations(recon_info, options)
     if "golden_weights" in kwargs and options.golden_weights != dcf.DEFAULT and not dcf.is_golden(recon_info):
         logger.warning("golden_weights=%s applies to golden trajectories only; this Default scan keeps "
                        "the |k|^2 weights.", options.golden_weights)
@@ -896,7 +936,8 @@ def get_dataobj(
             virtual_traj = None
             k0_frames: list = []
             if options.estimate_k0:
-                virtual_traj = kcentre.leading_points(recon_info, options.ignore_samples or 1)
+                virtual_traj = _leading_points(recon_info, options)
+                _warn_centre_gap(recon_info, options)
                 logger.info("Estimating the k-space centre (%s virtual sample(s) per spoke).",
                             virtual_traj.shape[1])
                 if info.get("recon_k0_reason") == "limit":

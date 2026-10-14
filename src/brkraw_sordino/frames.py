@@ -426,14 +426,15 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
     shape = (n_rx,) + tuple(vol)
     preds = None
     if virtual_traj is not None:
-        from .kcentre import N_ITER
+        from .kcentre import k0_iterations
+        n_iter = k0_iterations(recon_info)     # N_ITER unless the centre gap is wide (WI-0137)
 
         full = np.zeros(shape, dtype=np.complex128)
         add_range(full, 0, plan.n_rep * npro)
         stream.rewind()
         preds, k0 = [], []
         for ch in range(n_rx):
-            x, _ = serial.conjugate_gradient(kernel.normal, full[ch], N_ITER)
+            x, _ = serial.conjugate_gradient(kernel.normal, full[ch], n_iter)
             k0.append(complex(x.sum()))
             preds.append(serial.forward(x, virtual_traj).reshape(npro, -1))
             del x

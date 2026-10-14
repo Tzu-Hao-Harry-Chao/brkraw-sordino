@@ -24,8 +24,6 @@ def test_every_bool_option_reads_strings_case_insensitively(tmp_path, name):
     for text, value in (("false", False), ("False", False), ("FALSE", False), ("true", True),
                         ("True", True), ("TRUE", True), (True, True), (False, False)):
         kw = {name: text}
-        if name == "estimate_k0":
-            kw["correct_ramptime"] = True
         assert getattr(_opts(tmp_path, **kw), name) is value, (name, text)
     with pytest.raises(ValueError, match=name):
         _opts(tmp_path, **{name: "maybe"})
@@ -37,13 +35,13 @@ def test_string_false_is_not_true(tmp_path):
     assert _opts(tmp_path, split_ch="false").split_ch is False
 
 
-def test_estimate_k0_needs_correct_ramptime(tmp_path):
-    with pytest.raises(ValueError, match="estimate_k0"):
-        _opts(tmp_path, estimate_k0="true", correct_ramptime="false")
-    assert _opts(tmp_path, estimate_k0="TRUE").estimate_k0 is True
-    # off together is fine
-    o = _opts(tmp_path, estimate_k0="false", correct_ramptime="false")
-    assert (o.estimate_k0, o.correct_ramptime) == (False, False)
+def test_estimate_k0_and_correct_ramptime_are_independent(tmp_path):
+    # WI-0137 (D-0234): the two options no longer depend on each other
+    for k0 in (True, False):
+        for ramp in (True, False):
+            o = _opts(tmp_path, estimate_k0=str(k0).lower(), correct_ramptime=str(ramp).lower())
+            assert (o.estimate_k0, o.correct_ramptime) == (k0, ramp)
+    assert _opts(tmp_path, correct_ramptime="false").estimate_k0 is True     # the default stays on
 
 
 def test_removed_and_unknown_keys_warn_once(tmp_path, caplog):
@@ -81,16 +79,12 @@ def _info(version):
     return info(version)
 
 
-def test_estimate_k0_is_switched_off_for_general_zte(tmp_path, caplog):
-    o = _opts(tmp_path, estimate_k0=True)
-    with caplog.at_level(logging.INFO, logger="brkraw_sordino.hook"):
-        o = _resolve_k0(o, _info("zte"))
-    assert o.estimate_k0 is False
-    assert [r for r in caplog.records if "general ZTE" in r.getMessage()]
-    o2 = _resolve_k0(_opts(tmp_path, estimate_k0=True), _info("v2"))
-    assert o2.estimate_k0 is True
-    o3 = _resolve_k0(_opts(tmp_path), _info("zte"))
-    assert o3.estimate_k0 is False
+def test_estimate_k0_stays_on_for_general_zte(tmp_path):
+    # WI-0137 (D-0234): a general ZTE follows the option like every other scan
+    assert _resolve_k0(_opts(tmp_path, estimate_k0=True), _info("zte")).estimate_k0 is True
+    assert _resolve_k0(_opts(tmp_path), _info("zte")).estimate_k0 is True
+    assert _resolve_k0(_opts(tmp_path, estimate_k0=False), _info("zte")).estimate_k0 is False
+    assert _resolve_k0(_opts(tmp_path, estimate_k0=True), _info("v2")).estimate_k0 is True
 
 
 def test_estimate_k0_changes_the_recon_cache_key(tmp_path):

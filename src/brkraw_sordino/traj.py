@@ -570,10 +570,13 @@ def _trajectory_inputs(recon_info: Dict[str, Any], options: Options) -> Dict[str
         gap = timing_mod.kspace_gap(seq, over_sampling,
                                     getattr(options, "ignore_samples", None) or 1)
         if seq.version == "zte" and gap["gap_kgrid"] > 1.0:
+            # estimate_k0 fills it (WI-0137; the hook warns above kcentre.GAP_WARN_KGRID)
             logger.info(
                 "General ZTE: the first sample is %.1f k-grid units from the k-space "
-                "centre (dead time %.2f us); the centre is not filled.",
-                gap["gap_kgrid"], seq.acq_delay_total_us)
+                "centre (dead time %.2f us); %s.",
+                gap["gap_kgrid"], seq.acq_delay_total_us,
+                "estimate_k0 fills the centre" if getattr(options, "estimate_k0", False)
+                else "the centre is not filled")
         else:
             logger.debug(" + k-space centre gap: %s", gap)
     else:
