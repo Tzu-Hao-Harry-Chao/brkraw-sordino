@@ -34,6 +34,17 @@ class Options:
     # Peri-event frames (perievent.py): one image per time bin relative to a repeating event,
     # each bin a union of one range per event. Keyed through the frame plan, not as a raw option.
     peri_event: Optional[Union[str, dict]] = None
+    # Path to a 0/1 censor file over the frames motion was estimated from; a
+    # peri-event range is used only when all of its spokes are marked usable.
+    peri_censor: Optional[str] = None
+    # Subtract each spoke position's average over repetitions before gridding
+    # (frames.recon_frames); only task-neutral when the repetition length is not
+    # a multiple of the event period.
+    subtract_rep_mean: bool = False
+    # Rigid-body k-space motion correction (motioncorr.py): a 3dvolreg -1Dfile
+    # of per-frame parameters, and how many spokes each of its rows covers.
+    motion_file: Optional[str] = None
+    motion_spokes: Optional[int] = None
 
 
 __all__ = [
