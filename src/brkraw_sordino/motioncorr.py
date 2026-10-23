@@ -23,8 +23,9 @@ so a sample measured at nominal k is corrected by
     location  = R^T k            ( = ``traj @ R`` for row-vector trajectories)
 
 Both are verified against a synthetic ground truth in
-``ktReshuffle/validate_kspace_motion.py``: the corrected values match the truth
-to 6.9e-17, while flipping either convention is ~3600 times worse. That test
+``scripts/validate/validate_kspace_motion.py``: the corrected samples match the
+motion-free object at ``R^T k`` to 7e-17 (rounding), while a flipped phase sign
+leaves a 0.25 relative error and a transposed rotation 0.025. That test
 exists because a flipped sign produces an image that looks plausible and is
 worse than no correction at all.
 
