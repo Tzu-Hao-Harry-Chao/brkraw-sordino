@@ -43,7 +43,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
-from . import frameplan, golden, perievent
+from . import frameplan, golden, motioncorr, perievent
 
 logger = logging.getLogger(__name__)
 
@@ -336,7 +336,8 @@ class _Stream:
 
 def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, plan: FramePlan, *,
                  phase_factor=None, virtual_traj=None, k0_out=None, chunk_spokes=None, k0_method=None,
-                 weights=None, spoke_mask=None, out_scale=1.0):
+                 weights=None, spoke_mask=None, out_scale=1.0, subtract_rep_mean=False,
+                 motion_rot=None, motion_disp=None):
     """Write the frames of ``plan`` to ``img_fobj`` (the layout of ``recon_dataobj``); return their dtype.
 
     ``traj`` (``TrajectoryRows`` or an array), ``phase_factor`` (``PhaseRows`` or an array) and
@@ -351,6 +352,31 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
     (the K0 solve would still hold the excluded spokes): WI-0118 decides that case.
 
     ``out_scale`` and a ``traj`` with ``n_keep`` (``recon_matrix``, WI-0132): as in ``recon_dataobj``.
+
+    ``subtract_rep_mean``: before reconstructing, average each spoke position over the
+    repetitions read and subtract that average from every occurrence of the position.
+    Each bin of a peri-event plan is then built from residuals rather than raw spokes,
+    so whatever is fixed for a spoke position -- the undersampling pattern its own
+    trajectory produces, and the time-averaged anatomy -- cancels, and only what varies
+    between the repetitions of that position survives.
+
+    This is only task-neutral when the repetitions sample the event cycle evenly. For
+    these scans a repetition is 181 s against a 20 s cycle, so successive repetitions
+    advance the task phase by exactly 1 s and the 20 repetitions of any spoke cover all
+    20 phases once each: the average is the task-free background. With 1800 subsets the
+    repetition would be 180 s, every repetition of a spoke would land on the same task
+    phase, and the average would remove the response along with the background. The
+    caller is responsible for checking that; the engine only reports what it subtracted.
+
+    Costs one extra read of the FID and one array of
+    (NPro, receivers, points) complex64.
+
+    ``motion_rot`` (stream spokes, 3, 3) and ``motion_disp`` (stream spokes, 3),
+    both in voxel units: rigid-body motion correction applied spoke by spoke
+    (``motioncorr``). The translation phase is divided out of the samples and
+    each spoke is gridded on its true, rotated trajectory. Unlike censoring this
+    keeps every spoke. The density weights still come from the nominal
+    trajectory, which is an approximation for the rotated spokes.
     """
     from . import memguard, serial
     from .recon import (_row_source, correct_offreso, grid_shift, grid_shift_factor, parse_fid_info,
@@ -427,6 +453,21 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
         if virtual_traj is not None:
             kernel.finish(float(plan.n_rep))
             w_virtual = weights.virtual().reshape(npro, int(virtual_traj.shape[1]))
+    rep_mean = None
+    if subtract_rep_mean:
+        if plan.n_rep < 2:
+            raise ValueError("sordino: subtract_rep_mean needs at least 2 repetitions, "
+                             f"this run reads {plan.n_rep}")
+        rep_mean = np.zeros((npro, n_rx, n_points), dtype=np.complex64)
+        for r in range(plan.n_rep):
+            for a, b in serial.spoke_ranges(npro, chunk_spokes):
+                rep_mean[a:b] += stream.read(r * npro + a, b - a).astype(np.complex64)
+        rep_mean /= np.complex64(plan.n_rep)
+        stream.rewind()
+        logger.info("subtract_rep_mean: averaged %s repetitions of each of the %s spoke positions "
+                    "(%.2f GiB); every spoke is reconstructed as its deviation from that average.",
+                    plan.n_rep, npro, rep_mean.nbytes / 2**30)
+
     nf = serial.norm_factor(vol)
     shift = grid_shift(recon_info)       # derived from the affine by the hook (WI-0119)
     adj = serial.Adjoint(vol)
@@ -441,9 +482,12 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
             for a, b in serial.spoke_ranges(hi - lo, chunk_spokes):
                 a, b = a + lo, b + lo
                 k = stream.read(r * npro + a, b - a)
+                if rep_mean is not None:
+                    k = k - rep_mean[a:b]          # residual from this position's own average
                 if phase_factor is not None:
                     k = k * phase_factor[a:b][:, None, :]
                 k = k[..., ign:n_stop]
+                g0 = r * npro + a
                 if spoke_mask is not None:
                     k[~spoke_mask[r * npro + a:r * npro + b]] = 0.0
                 for ch in range(n_rx):
@@ -451,6 +495,12 @@ def recon_frames(fid_fobj, traj, recon_info: Dict[str, Any], img_fobj, options, 
                     if freq is not None:
                         k[:, ch, :] = correct_offreso(k[:, ch, :], freq, eff_bandwidth=bw, over_sampling=osf)
                 tr = rows(a, b)[:, ign:]
+                if motion_rot is not None or motion_disp is not None:
+                    sl = slice(g0, g0 + (b - a))
+                    k, tr = motioncorr.correct_chunk(
+                        k, tr,
+                        None if motion_rot is None else motion_rot[sl],
+                        None if motion_disp is None else motion_disp[sl])
                 w = serial.density(tr) / dmax if weights is None else weights.chunk(a, b)
                 g = grid_shift_factor(tr, shift)
                 if g is not None:          # measured samples only; the predicted centre samples
